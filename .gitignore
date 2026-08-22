@@ -1,0 +1,50 @@
+# Python bytecode and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local Python environments and build artifacts
+.venv/
+venv/
+env/
+*.egg-info/
+build/
+dist/
+
+# Local configuration and editor files
+.env
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local release-preparation and debugging helpers
+scratch_*.py
+web/check_*.js
+web/debug_*.js
+*.bak
+
+# Local media, ComfyUI working data, and generated previews
+input/
+output/
+temp/
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.aac
+*.ogg
+*.opus
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+*.ts
+*.m2ts
+
+# Keep release-preparation documents outside the public repository
+docs/

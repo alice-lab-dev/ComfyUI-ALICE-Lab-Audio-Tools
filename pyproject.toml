@@ -1,0 +1,20 @@
+[project]
+name = "alice-lab-audio-tools"
+version = "0.1.0"
+description = "ComfyUI custom nodes for selecting media ranges, editing and comparing audio, and previewing audio and video."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = []
+classifiers = [
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
+
+[project.urls]
+Repository = "https://github.com/alice-lab-dev/ComfyUI-ALICE-Lab-Audio-Tools"
+
+[tool.comfy]
+# PublisherId must be added after the Registry publisher ID is confirmed.
+DisplayName = "ComfyUI ALICE Lab Audio Tools"
