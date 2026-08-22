@@ -7,7 +7,7 @@ import types
 from pathlib import Path
 
 PACKAGE = "alice_lab_audio_tools_spectrogram_test"
-ROOT = Path(__file__).parents[2]
+ROOT = Path(__file__).parents[2] / "src"
 package = types.ModuleType(PACKAGE)
 package.__path__ = [str(ROOT)]
 sys.modules.setdefault(PACKAGE, package)

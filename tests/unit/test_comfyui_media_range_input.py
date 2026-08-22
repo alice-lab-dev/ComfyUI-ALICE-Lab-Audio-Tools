@@ -9,7 +9,7 @@ import torch
 
 _MODULE_SPEC = importlib.util.spec_from_file_location(
     "alice_test_media_range_input",
-    Path(__file__).parents[2] / "media_range_input.py",
+    Path(__file__).parents[2] / "src" / "media_range_input.py",
 )
 assert _MODULE_SPEC and _MODULE_SPEC.loader
 _MODULE = importlib.util.module_from_spec(_MODULE_SPEC)

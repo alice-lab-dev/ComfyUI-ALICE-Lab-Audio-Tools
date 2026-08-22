@@ -8,7 +8,7 @@ import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
     "alice_test_media_tools",
-    Path(__file__).parents[2] / "media_tools.py",
+    Path(__file__).parents[2] / "src" / "media_tools.py",
 )
 assert _SPEC and _SPEC.loader
 media_tools = importlib.util.module_from_spec(_SPEC)

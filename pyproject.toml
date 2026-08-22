@@ -1,6 +1,6 @@
 [project]
 name = "alice-lab-audio-tools"
-version = "0.1.1"
+version = "0.1.2"
 description = "ComfyUI custom nodes for selecting media ranges, editing and comparing audio, and previewing audio and video."
 readme = "README.md"
 license = { file = "LICENSE" }

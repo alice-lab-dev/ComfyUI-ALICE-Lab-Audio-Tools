@@ -10,7 +10,7 @@ import torch
 
 _MIXER_SPEC = importlib.util.spec_from_file_location(
     "alice_test_mixer",
-    Path(__file__).parents[2] / "mixer.py",
+    Path(__file__).parents[2] / "src" / "mixer.py",
 )
 assert _MIXER_SPEC and _MIXER_SPEC.loader
 _MIXER = importlib.util.module_from_spec(_MIXER_SPEC)
@@ -21,7 +21,7 @@ reset_track_values = _MIXER.reset_track_values
 
 
 def test_node_display_names_are_search_oriented_and_keep_node_identifiers() -> None:
-    nodes_source = Path(__file__).parents[2] / "nodes.py"
+    nodes_source = Path(__file__).parents[2] / "src" / "nodes.py"
     module = ast.parse(nodes_source.read_text(encoding="utf-8"))
     display_mapping = next(
         ast.literal_eval(statement.value)

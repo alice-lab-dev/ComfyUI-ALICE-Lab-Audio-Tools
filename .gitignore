@@ -46,7 +46,9 @@ temp/
 *.ts
 *.m2ts
 
-# Keep release-preparation documents outside the public repository, except README images
+# Keep release-preparation documents outside the public repository, except README assets
 docs/*
 !docs/images/
 !docs/images/**
+!docs/examples/
+!docs/examples/**

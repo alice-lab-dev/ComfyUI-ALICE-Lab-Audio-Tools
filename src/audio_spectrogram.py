@@ -284,27 +284,27 @@ class AliceLabSpectrogram:
     ):
         sample_rate = int(audio.get("sample_rate", 44100))
         waveform = audio.get("waveform", torch.zeros((1, 1, 1024)))
-        
+
         # Squeeze batch if present
         if waveform.ndim == 3:
             waveform = waveform.squeeze(0)
 
         total_duration = waveform.shape[-1] / sample_rate
-            
+
         # Apply time slicing
         start_sample = int(start_seconds * sample_rate)
         end_sample = int(end_seconds * sample_rate) if end_seconds > 0 else waveform.shape[-1]
         start_sample = max(0, min(start_sample, waveform.shape[-1]))
         end_sample = max(start_sample + 1, min(end_sample, waveform.shape[-1]))
-        
+
         sliced_waveform = waveform[..., start_sample:end_sample]
         actual_duration = (end_sample - start_sample) / sample_rate
-        
+
         # Get raw dBFS matrix using existing logic (min 800 columns for UI and IMAGE)
         ui_columns = min(end_sample - start_sample, 800)
         spec_data = _spectrogram(sliced_waveform, ui_columns, bins=96, min_db=spectrum_min_db, max_db=spectrum_max_db)
         matrix = spec_data["matrix"]
-        
+
         # Prepare IMAGE tensor
         # matrix is [bins][columns] of float dB values
         # We need to map these dB values to colors using the colormap
@@ -312,16 +312,16 @@ class AliceLabSpectrogram:
         # Normalize between 0 and 1
         normalized = (matrix_tensor - spectrum_min_db) / max(1e-6, (spectrum_max_db - spectrum_min_db))
         normalized = torch.clamp(normalized, 0.0, 1.0)
-        
+
         # Convert to indices (0 to 255)
         indices = (normalized * 255).long()
-        
+
         colormap = self._generate_colormap(256).to(indices.device)
         image_rgb = colormap[indices] # Shape: (bins, columns, 3)
-        
+
         # The frontend spectrogram draws frequencies from bottom to top, so we need to flip vertically
         image_rgb = torch.flip(image_rgb, dims=[0])
-        
+
         image_out = self._render_chart(
             image_rgb,
             start_seconds=start_sample / sample_rate,
@@ -341,7 +341,7 @@ class AliceLabSpectrogram:
             "spectrum_max_db": spectrum_max_db,
             "spectrum": spec_data,
         }
-        
+
         return {
             "ui": {"alice_lab_audio_spectrogram": [json.dumps(payload)]},
             "result": (image_out,)

@@ -1,5 +1,9 @@
 # ComfyUI ALICE Lab Audio Tools
 
+<table>
+  <thead><tr><th>English</th><th><a href="README_jp.md">日本語</a></th></tr></thead>
+</table>
+
 ComfyUI ALICE Lab Audio Tools is a collection of custom nodes for selecting media ranges, editing and comparing audio, visualizing waveforms and spectrograms, and replacing audio in video workflows.
 
 > **Status:** This is an alpha release. Node interfaces and UI behavior may still change.
@@ -63,9 +67,10 @@ ComfyUI/
 └── custom_nodes/
     └── ComfyUI-ALICE-Lab-Audio-Tools/
         ├── __init__.py
-        ├── nodes.py
-        ├── audio_compare.py
-        ├── audio_spectrogram.py
+        ├── src/
+        │   ├── nodes.py
+        │   ├── audio_compare.py
+        │   └── audio_spectrogram.py
         └── web/
 ```
 
@@ -83,6 +88,14 @@ Load Media Range
 Replace Video Audio.video ──> Preview Video
 ```
 
+[Download this workflow](docs/examples/video_range.json)
+
+<p align="center">
+  <a href="docs/images/select_and_process_part_of_video.png">
+    <img src="docs/images/select_and_process_part_of_video.png" alt="Select and process part of a video workflow" width="100%">
+  </a>
+</p>
+
 ### Compare two audio results
 
 ```text
@@ -94,11 +107,27 @@ Compare Audio.audio_2_delay_seconds   ──> Output Float
 Compare Audio.1−2 difference          ──> Output Waveform
 ```
 
+[Download this workflow](docs/examples/compare_two_audio_results.json)
+
+<p align="center">
+  <a href="docs/images/compare_two_audio _results.png">
+    <img src="docs/images/compare_two_audio _results.png" alt="Compare two audio results workflow" width="100%">
+  </a>
+</p>
+
 ### Create a spectrogram image
 
 ```text
 AUDIO ──> Audio Spectrogram ──> IMAGE
 ```
+
+[Download this workflow](docs/examples/create_spectrogram_image.json)
+
+<p align="center">
+  <a href="docs/images/create_spectrogram _mage.png">
+    <img src="docs/images/create_spectrogram _mage.png" alt="Create a spectrogram image workflow" width="100%">
+  </a>
+</p>
 
 ## Node Reference
 
@@ -287,6 +316,12 @@ Keeps the image from the connected `VIDEO` and replaces its soundtrack with the 
 - Short audio is padded with silence; long audio is trimmed to the video duration.
 - If video stream copy fails, the node retries with H.264 (`libx264`, CRF 18, yuv420p).
 - If no video is connected, downstream video execution is blocked safely.
+
+<p align="center">
+  <a href="docs/images/replace_video_audio.png">
+    <img src="docs/images/replace_video_audio.png" alt="Replace Video Audio node" width="333">
+  </a>
+</p>
 
 ### Preview Video
 

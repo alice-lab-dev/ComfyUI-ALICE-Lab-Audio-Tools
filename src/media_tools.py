@@ -27,4 +27,3 @@ def resolve_media_tool(name: str) -> str:
         f"{name} was not found. Install FFmpeg and make {name} available "
         "to the ComfyUI process."
     )
-

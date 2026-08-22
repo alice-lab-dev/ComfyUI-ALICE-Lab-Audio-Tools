@@ -9,7 +9,7 @@ import pytest
 
 SPEC = importlib.util.spec_from_file_location(
     "alice_lab_audio_tools_test_float_output",
-    Path(__file__).parents[2] / "float_output.py",
+    Path(__file__).parents[2] / "src" / "float_output.py",
 )
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
