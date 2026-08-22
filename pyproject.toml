@@ -16,5 +16,5 @@ classifiers = [
 Repository = "https://github.com/alice-lab-dev/ComfyUI-ALICE-Lab-Audio-Tools"
 
 [tool.comfy]
-# PublisherId must be added after the Registry publisher ID is confirmed.
+PublisherId = "alice-lab-dev"
 DisplayName = "ComfyUI ALICE Lab Audio Tools"

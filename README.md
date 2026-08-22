@@ -363,11 +363,13 @@ Run `Compare Audio` again. Interactive analysis sessions are intentionally bound
 - Replace Video Audio produces MP4 and requires `libx264` only when stream-copy fallback is needed.
 - Preview Video downloads a temporary browser preview; it is not a server-side save node.
 
-## Support
+## Disclaimer
 
-If you find these tools useful and would like to support ongoing development, testing, and maintenance, you can support ALICE Lab here:
+This project is provided as-is, without warranty of any kind.
 
-[Buy Me a Coffee](https://buymeacoffee.com/alicelabdev)
+Use of this software is at your own risk. The authors and contributors are not responsible for any data loss, damage, legal issues, or other consequences resulting from its use.
+
+Users are responsible for ensuring that any audio, video, or other media processed with this software is used in accordance with applicable laws, licenses, copyrights, and terms of service.
 
 ## License
 
@@ -377,3 +379,15 @@ See the [LICENSE](LICENSE) file for the full license terms and the [NOTICE](NOTI
 ## Author
 
 ALICE Lab
+
+## Articles and Workflows
+
+Development notes, experiments, usage examples, and practical workflows for ALICE Lab Audio Tools are published on note.
+
+[ALICE Lab Audio Tools Development Log on note](https://note.com/mydearnana/m/m84330804a3d4)
+
+## Support
+
+If you find these tools useful and would like to support ongoing development, testing, and maintenance, you can support ALICE Lab here:
+
+[Buy Me a Coffee](https://buymeacoffee.com/alicelabdev)
