@@ -5,8 +5,8 @@ ComfyUI ALICE Lab Audio Tools is a collection of custom nodes for selecting medi
 > **Status:** This is an alpha release. Node interfaces and UI behavior may still change.
 
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/48e1aa05-821b-4110-99a2-a4fbff1bc41a">
-    <img src="https://github.com/user-attachments/assets/48e1aa05-821b-4110-99a2-a4fbff1bc41a" alt="ComfyUI ALICE Lab Audio Tools workflow overview" width="100%">
+  <a href="docs/images/workflow-overview.png">
+    <img src="docs/images/workflow-overview.png" alt="ComfyUI ALICE Lab Audio Tools workflow overview" width="100%">
   </a>
 </p>
 
@@ -107,8 +107,8 @@ AUDIO ──> Audio Spectrogram ──> IMAGE
 Loads media from your local device. You can select an A-B range while viewing the waveform, then output the selected range downstream as `AUDIO` and `VIDEO`.
 
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/13d8143d-cbab-48f7-8bad-b29233f4ab9c">
-    <img src="https://github.com/user-attachments/assets/13d8143d-cbab-48f7-8bad-b29233f4ab9c" alt="Load Media Range Upload node" width="720">
+  <a href="docs/images/load-media-range-upload.png">
+    <img src="docs/images/load-media-range-upload.png" alt="Load Media Range Upload node" width="720">
   </a>
 </p>
 
@@ -173,8 +173,8 @@ When zoomed, the node requests a more detailed signed min/max waveform for the v
 Displays up to eight audio tracks on a shared timeline. You can arrange them while viewing their waveforms, adjust each track, and output both the completed mix and the processed individual tracks.
 
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/2e86cdf2-5a41-4f94-9f7f-f485c323c6f5">
-    <img src="https://github.com/user-attachments/assets/2e86cdf2-5a41-4f94-9f7f-f485c323c6f5" alt="Audio Mixer node" width="760">
+  <a href="docs/images/audio-mixer.png">
+    <img src="docs/images/audio-mixer.png" alt="Audio Mixer node" width="760">
   </a>
 </p>
 
@@ -206,8 +206,8 @@ Muted, inactive-solo, missing-track outputs are blocked instead of emitting sile
 Displays two waveforms for comparison. It can automatically correct their time difference and output aligned audio, difference audio, an overlay, similarity, and the detected delay.
 
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/6b58f5c9-b4b3-449f-b9eb-5a5dbb327be0">
-    <img src="https://github.com/user-attachments/assets/6b58f5c9-b4b3-449f-b9eb-5a5dbb327be0" alt="Compare Audio node" width="720">
+  <a href="docs/images/compare-audio.png">
+    <img src="docs/images/compare-audio.png" alt="Compare Audio node" width="720">
   </a>
 </p>
 
@@ -239,8 +239,8 @@ Interactive playback is limited to 600 seconds per request. Detailed comparison 
 Displays the frequency content of `AUDIO` as a dBFS spectrogram and outputs the displayed graph as an `IMAGE` for downstream use.
 
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/c11185e6-18e6-46d6-a717-d55bf9dde7b0">
-    <img src="https://github.com/user-attachments/assets/c11185e6-18e6-46d6-a717-d55bf9dde7b0" alt="Audio Spectrogram node" width="520">
+  <a href="docs/images/audio-spectrogram.png">
+    <img src="docs/images/audio-spectrogram.png" alt="Audio Spectrogram node" width="520">
   </a>
 </p>
 
@@ -260,8 +260,8 @@ Its `IMAGE` output is a 900 × 520 RGB chart with a title, time axis, frequency 
 Plays an `AUDIO` value so you can confirm its sound and waveform. The waveform includes adaptive time ticks. The node also displays duration, sample rate, channel count, and peak dBFS, then returns the unchanged `audio` output.
 
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/cb034891-659e-4dee-a2dc-5e2f6a299549">
-    <img src="https://github.com/user-attachments/assets/cb034891-659e-4dee-a2dc-5e2f6a299549" alt="Output Waveform node" width="760">
+  <a href="docs/images/output-waveform.png">
+    <img src="docs/images/output-waveform.png" alt="Output Waveform node" width="760">
   </a>
 </p>
 
@@ -272,8 +272,8 @@ Plays an `AUDIO` value so you can confirm its sound and waveform. The waveform i
 Displays a connected `FLOAT` result with a custom label and 0 to 12 decimal places, making values such as similarity and delay easy to check. It then returns the same value.
 
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/03b97275-0428-4a15-ac71-63f3e59b23eb">
-    <img src="https://github.com/user-attachments/assets/03b97275-0428-4a15-ac71-63f3e59b23eb" alt="Output Float node" width="430">
+  <a href="docs/images/output-float.png">
+    <img src="docs/images/output-float.png" alt="Output Float node" width="430">
   </a>
 </p>
 
@@ -293,8 +293,8 @@ Keeps the image from the connected `VIDEO` and replaces its soundtrack with the 
 Displays a connected `VIDEO` directly in the node for playback and confirmation. It can be downloaded with the name entered in `filename`, and the unchanged `video` is also passed downstream.
 
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/fe8a2146-8c83-47ee-a8e5-403cd33d30d9">
-    <img src="https://github.com/user-attachments/assets/fe8a2146-8c83-47ee-a8e5-403cd33d30d9" alt="Preview Video node" width="500">
+  <a href="docs/images/preview-video.png">
+    <img src="docs/images/preview-video.png" alt="Preview Video node" width="500">
   </a>
 </p>
 
