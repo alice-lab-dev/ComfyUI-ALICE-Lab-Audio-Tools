@@ -78,6 +78,8 @@ There are currently no additional pip dependencies beyond the libraries supplied
 
 ## Quick Start
 
+Example workflow JSON files are available in [`docs/examples/`](docs/examples/).
+
 ### Select and process part of a video
 
 ```text
@@ -87,8 +89,6 @@ Load Media Range
 
 Replace Video Audio.video ──> Preview Video
 ```
-
-[Download this workflow](docs/examples/video_range.json)
 
 <p align="center">
   <a href="docs/images/select_and_process_part_of_video.png">
@@ -107,8 +107,6 @@ Compare Audio.audio_2_delay_seconds   ──> Output Float
 Compare Audio.1−2 difference          ──> Output Waveform
 ```
 
-[Download this workflow](docs/examples/compare_two_audio_results.json)
-
 <p align="center">
   <a href="docs/images/compare_two_audio _results.png">
     <img src="docs/images/compare_two_audio _results.png" alt="Compare two audio results workflow" width="100%">
@@ -120,8 +118,6 @@ Compare Audio.1−2 difference          ──> Output Waveform
 ```text
 AUDIO ──> Audio Spectrogram ──> IMAGE
 ```
-
-[Download this workflow](docs/examples/create_spectrogram_image.json)
 
 <p align="center">
   <a href="docs/images/create_spectrogram _mage.png">

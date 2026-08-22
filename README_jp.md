@@ -76,6 +76,8 @@ ComfyUIが提供するライブラリ以外の追加pip依存はありません�
 
 ## クイックスタート
 
+サンプルワークフローのJSONファイルは[`docs/examples/`](docs/examples/)にあります。
+
 ### 動画の一部を選択して処理する
 
 ```text
@@ -85,8 +87,6 @@ Load Media Range
 
 Replace Video Audio.video ──> Preview Video
 ```
-
-[このworkflow JSONをダウンロード](docs/examples/video_range.json)
 
 <p align="center">
   <a href="docs/images/select_and_process_part_of_video.png">
@@ -105,8 +105,6 @@ Compare Audio.audio_2_delay_seconds   ──> Output Float
 Compare Audio.1−2 difference          ──> Output Waveform
 ```
 
-[このworkflow JSONをダウンロード](docs/examples/compare_two_audio_results.json)
-
 <p align="center">
   <a href="docs/images/compare_two_audio _results.png">
     <img src="docs/images/compare_two_audio _results.png" alt="2つの音声を比較するワークフロー" width="100%">
@@ -118,8 +116,6 @@ Compare Audio.1−2 difference          ──> Output Waveform
 ```text
 AUDIO ──> Audio Spectrogram ──> IMAGE
 ```
-
-[このworkflow JSONをダウンロード](docs/examples/create_spectrogram_image.json)
 
 <p align="center">
   <a href="docs/images/create_spectrogram _mage.png">
@@ -196,3 +192,36 @@ mp3  mp4   mpg  mpeg  ogg   opus ts   wav  webm  wma
 - メディア対応は拡張子とインストール済みFFmpegコーデックに依存します。
 - ファイルベースのMedia Range出力は常に44.1 kHzステレオです。Media Range (Input)の直接`AUDIO`入力は元形式を保持します。
 - Compare Audioは最初の音声バッチと最大2チャンネルのみを使用します。
+- 自動位置合わせには振幅エンベロープの相関を使用します。そのため、無音、関連性のない音源、繰り返しの多い音声、または検索範囲を超える遅延では、意図しないオフセットが選択される場合があります。
+- Audio Mixerの入力は最大8つです。
+- Replace Video Audioの出力形式はMP4です。ストリームコピーからのフォールバックが必要な場合に限り、`libx264`が必要です。
+- Preview Videoはブラウザで確認するための一時ファイルをダウンロードします。サーバー側へ保存するノードではありません。
+
+## 免責事項
+
+本プロジェクトは現状のまま提供され、明示または黙示を問わず、いかなる保証もありません。
+
+本ソフトウェアの使用は、利用者自身の責任で行ってください。作者およびコントリビューターは、本ソフトウェアの使用によって生じたデータの損失、損害、法的問題、その他の結果について責任を負いません。
+
+本ソフトウェアで処理する音声、動画、その他のメディアについて、適用される法律、ライセンス、著作権、および利用規約を遵守する責任は利用者にあります。
+
+## ライセンス
+
+本プロジェクトはApache License 2.0のもとで提供されています。
+ライセンス条項の全文は[LICENSE](LICENSE)を、著作権および帰属表示については[NOTICE](NOTICE)をご覧ください。
+
+## 作者
+
+ALICE Lab
+
+## 記事とワークフロー
+
+ALICE Lab Audio Toolsの開発記録、実験、使用例、実践的なワークフローをnoteで公開しています。
+
+[noteのALICE Lab Audio Tools開発記録](https://note.com/mydearnana/m/m84330804a3d4)
+
+## サポート
+
+これらのツールが役に立ち、今後の開発、テスト、メンテナンスを支援したいと思っていただけましたら、こちらからALICE Labをサポートできます。
+
+[Buy Me a Coffee](https://buymeacoffee.com/alicelabdev)
