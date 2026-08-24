@@ -23,7 +23,7 @@ ComfyUI ALICE Lab Audio Tools is a collection of custom nodes for selecting medi
 | Media | `Load Media Range (Upload)` | Load media from your local device, select an A-B range while viewing its waveform, and output the selected range as `AUDIO` and `VIDEO`. |
 | Media | `Load Media Range (Path)` | Open media directly from an absolute path, select an A-B range while viewing its waveform, and output the selected range as `AUDIO` and `VIDEO`. |
 | Media | `Media Range (Input)` | Preview upstream `AUDIO` or `VIDEO`, select an A-B range from its waveform, and pass the selected range downstream. |
-| Audio | `Audio Mixer` | Arrange and mix up to eight audio tracks while viewing their waveforms, with gain, position, mute, solo, and fade controls. |
+| Audio | `Audio Mixer` | Arrange and mix up to eight audio tracks with non-destructive clip resizing, silent extension, per-clip editing, and waveform previews. |
 | Audio | `Compare Audio` | Compare two waveforms, automatically correct their time difference, and output aligned audio, difference audio, similarity, and delay. |
 | Audio | `Audio Spectrogram` | Inspect the frequency content of audio as a dBFS spectrogram and output the graph as an `IMAGE`. |
 | Audio | `Audio to Irodori Ref Config` | Convert `AUDIO` to the `IRODORI_REF_CONFIG` used by comfy-Irodori-TTS reference audio input. |
@@ -225,16 +225,18 @@ Accepts up to eight optional inputs, `audio_1` through `audio_8`.
 Controls:
 
 - Per-track name and waveform color.
-- Gain from -100 dB to +24 dB.
+- Per-clip gain from -100 dB to +24 dB, position, fade in, and fade out.
 - Mute and solo; one track cannot be both muted and soloed.
-- Position from -86400 to +86400 seconds.
-- Linear fade in and fade out.
 - Master gain from -100 dB to +24 dB.
 - Optional peak-based clipping protection.
-- `reset_before_run` clears clip edits and copied/pasted clips, resets gain, position, and fades, and rebuilds one default clip from each currently connected input.
+- `reset_before_run` clears clip edits and copied/pasted clips, then resets gain, position, and fades.
 - Shared timeline with adaptive time ticks, mouse-wheel zoom, right-drag panning, and `Show All` to fit every positioned waveform, including waveforms moved outside the previous view.
 
-A positive position delays a track. A negative position removes samples that fall before the shared timeline starts. Waveforms and fade handles can be edited directly in the node UI.
+Click a clip to select it and drag it to change its timeline position. Drag either edge to shorten or extend the clip; trimmed audio can be restored, and areas beyond the available source audio are added as silence. Drag the top handles to edit linear fades. Double-click the `dB`, `Pos`, `Fade In`, or `Fade Out` label to reset that value to zero. The waveform and mixed output follow the edited clip length.
+
+Right-click a clip for `Copy`, `Cut`, `Duplicate`, or `Delete`. After copying or cutting, right-click the destination time on the same or another track and choose `Paste`. Duplicate places a new editable clip directly after the source clip.
+
+A positive position delays a clip. A negative position removes samples that fall before the shared timeline starts.
 
 Outputs:
 

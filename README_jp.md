@@ -23,7 +23,7 @@ ComfyUI ALICE Lab Audio Toolsは、メディア範囲の選択、音声の編集
 | Media | `Load Media Range (Upload)` | ローカルメディアをアップロードし、波形を見ながらA-B範囲を選んで`AUDIO`と`VIDEO`を出力します。 |
 | Media | `Load Media Range (Path)` | 絶対パスのメディアを開き、A-B範囲を選んで`AUDIO`と`VIDEO`を出力します。 |
 | Media | `Media Range (Input)` | 上流の`AUDIO`または`VIDEO`をプレビューし、選択範囲を下流へ渡します。 |
-| Audio | `Audio Mixer` | 最大8トラックを波形で確認しながら配置・ミックスします。 |
+| Audio | `Audio Mixer` | 最大8トラックを、非破壊のクリップ長変更、無音延長、クリップ単位の編集、波形表示を使って配置・ミックスします。 |
 | Audio | `Compare Audio` | 2つの音声を自動整列し、差分、類似度、遅延を出力します。 |
 | Audio | `Audio Spectrogram` | dBFSスペクトログラムを表示し、`IMAGE`として出力します。 |
 | Audio | `Audio to Irodori Ref Config` | `AUDIO`をcomfy-Irodori-TTSの参照音声用`IRODORI_REF_CONFIG`へ変換します。 |
@@ -156,9 +156,15 @@ ComfyUI標準`AUDIO`と、IrodoriTTS Reference Audioと同じ`normalize_ref_audi
 
 ### Audio Mixer
 
-最大8個の入力を共有タイムラインでミックスします。トラック名・色、ゲイン、位置、ミュート、ソロ、フェード、マスターゲイン、クリッピング保護を設定できます。`mixed_audio`と処理済みの`track_1`から`track_8`を出力します。
+最大8個の入力を共有タイムラインでミックスします。トラック名・色、クリップ単位のゲイン・位置・フェード、ミュート、ソロ、マスターゲイン、クリッピング保護を設定できます。`mixed_audio`と処理済みの`track_1`から`track_8`を出力します。
 
 <p align="center"><a href="docs/images/audio-mixer.png"><img src="docs/images/audio-mixer.png" alt="Audio Mixer node" width="760"></a></p>
+
+クリップをクリックして選択し、ドラッグでタイムライン位置を変更します。左右端をドラッグして短縮・延長でき、短縮した部分は再び伸ばして復元できます。元音声より長くした部分には無音が追加され、波形表示とミックス出力にも編集後のクリップ長が反映されます。上端のハンドルでリニアフェードを変更し、`dB`、`Pos`、`Fade In`、`Fade Out`のラベルをダブルクリックすると、その値を0へ戻せます。
+
+クリップを右クリックすると`Copy`、`Cut`、`Duplicate`、`Delete`を実行できます。CopyまたはCut後、同じトラックまたは別トラックの貼り付けたい時刻を右クリックして`Paste`を選びます。Duplicateは元クリップの直後へ新しい編集可能なクリップを配置します。
+
+`reset_before_run`を有効にすると、クリップ編集とCopy/Pasteしたクリップを消去し、ゲイン・位置・フェードをリセットします。
 
 ### Compare Audio
 
