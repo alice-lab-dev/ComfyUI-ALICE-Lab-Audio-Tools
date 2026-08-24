@@ -208,7 +208,13 @@ When zoomed, the node requests a more detailed signed min/max waveform for the v
 
 Accepts standard ComfyUI `AUDIO` plus the same `normalize_ref_audio` and `max_ref_seconds` options as IrodoriTTS Reference Audio. It outputs `IRODORI_REF_CONFIG` for direct connection to IrodoriTTS Sampler.
 
-The first audio batch is averaged to mono and written at its original sample rate as PCM16 WAV under `ComfyUI/temp/alice_lab_audio_tools/irodori_ref/`. The filename is a content hash, so rerunning identical audio reuses the same file. Irodori-TTS is not imported by this node.
+<p align="center">
+  <a href="docs/images/rodori_ref_config.png">
+    <img src="docs/images/rodori_ref_config.png" alt="Audio to Irodori Ref Config node" width="360">
+  </a>
+</p>
+
+The first audio batch is averaged to mono and written at its original sample rate as PCM16 WAV under `ComfyUI/temp/alice_lab_audio_tools/irodori_ref/`. The filename is a content hash, so rerunning identical audio reuses the same file. Currently, this can be used with the IrodoriTTS Sampler from comfy-Irodori-TTS.
 
 ### Audio Mixer
 

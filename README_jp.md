@@ -152,7 +152,9 @@ Path版は絶対パスの対応ファイルをコピーせずに開きます。�
 
 ComfyUI標準`AUDIO`と、IrodoriTTS Reference Audioと同じ`normalize_ref_audio`、`max_ref_seconds`を受けます。出力`IRODORI_REF_CONFIG`はIrodoriTTS Samplerへ直接接続できます。
 
-先頭の音声バッチをmono化し、元のサンプルレートを保ったPCM16 WAVとして`ComfyUI/temp/alice_lab_audio_tools/irodori_ref/`へ保存します。ファイル名は音声内容のハッシュなので、同じ音声の再実行では同じファイルを再利用します。このノードからIrodori-TTSをimportしません。
+<p align="center"><a href="docs/images/rodori_ref_config.png"><img src="docs/images/rodori_ref_config.png" alt="Audio to Irodori Ref Config node" width="360"></a></p>
+
+先頭の音声バッチをmono化し、元のサンプルレートを保ったPCM16 WAVとして`ComfyUI/temp/alice_lab_audio_tools/irodori_ref/`へ保存します。ファイル名は音声内容のハッシュなので、同じ音声の再実行では同じファイルを再利用します。現在は comfy-Irodori-TTS の IrodoriTTS Sampler で利用できます。
 
 ### Audio Mixer
 
