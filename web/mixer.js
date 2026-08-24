@@ -12,6 +12,8 @@ function defaults(index) {
         mute: false,
         solo: false,
         offset: 0,
+        source_start: 0,
+        timeline_duration: null,
         fade_in: 0,
         fade_out: 0,
     };
@@ -88,7 +90,7 @@ app.registerExtension({
             const footer = document.createElement("div");
             footer.style.cssText = "display:flex;gap:12px;align-items:center;color:#aeb9c4";
             const help = document.createElement("span");
-            help.textContent = "Wheel: zoom · Right-drag: pan · Left-drag waveform: position · Drag edge handles: fades";
+            help.textContent = "Wheel: zoom · Right-drag: pan · Drag waveform: position · Drag clip edges: length · Top handles: fades";
             help.style.flex = "1";
             const viewLabel = document.createElement("span");
             viewLabel.style.whiteSpace = "nowrap";
@@ -106,13 +108,24 @@ app.registerExtension({
                 return renderData.tracks?.find((track) => track.index === index);
             }
 
+            function clipDuration(data) {
+                const stored = Number(settings[data.index]?.timeline_duration);
+                if (Number.isFinite(stored) && stored > 0) return stored;
+                return Number(data.timeline_duration ?? data.duration) || 0.001;
+            }
+
+            function clipSourceStart(index) {
+                const value = Number(settings[index]?.source_start);
+                return Number.isFinite(value) ? value : 0;
+            }
+
             function timelineExtent() {
                 const tracks = renderData.tracks || [];
                 const start = Math.min(0, ...tracks.map((data) => settings[data.index].offset));
                 const end = Math.max(
                     0.001,
                     renderData.duration || 0,
-                    ...tracks.map((data) => settings[data.index].offset + data.duration),
+                    ...tracks.map((data) => settings[data.index].offset + clipDuration(data)),
                 );
                 return { start, end, span: Math.max(0.001, end - start) };
             }
@@ -142,10 +155,18 @@ app.registerExtension({
                 const track = settings[index];
                 const data = renderedTrack(index);
                 const other = kind === "fade_in" ? track.fade_out : track.fade_in;
-                const maximum = data ? Math.max(0, data.duration - other) : 86400;
+                const maximum = data ? Math.max(0, clipDuration(data) - other) : 86400;
                 track[kind] = Math.round(Math.max(0, Math.min(maximum, value)) * 1000) / 1000;
                 const input = kind === "fade_in" ? rowElements[index]?.fadeIn : rowElements[index]?.fadeOut;
                 if (input) input.value = String(track[kind]);
+            }
+
+            function clampFades(index, duration) {
+                const track = settings[index];
+                track.fade_in = Math.min(track.fade_in, duration);
+                track.fade_out = Math.min(track.fade_out, Math.max(0, duration - track.fade_in));
+                rowElements[index].fadeIn.value = String(track.fade_in);
+                rowElements[index].fadeOut.value = String(track.fade_out);
             }
 
             function saveSettings() {
@@ -217,6 +238,8 @@ app.registerExtension({
                 settings.forEach((track, index) => {
                     track.gain_db = 0;
                     track.offset = 0;
+                    track.source_start = 0;
+                    track.timeline_duration = null;
                     track.fade_in = 0;
                     track.fade_out = 0;
                     const controls = rowElements[index];
@@ -276,7 +299,8 @@ app.registerExtension({
                 draw();
             }
 
-            function drawPeaks(ctx, peaks, x, y, width, height, color) {
+            function drawPeaks(ctx, data, track, x, y, width, height, color) {
+                const peaks = data.source_peaks?.length ? data.source_peaks : data.peaks;
                 if (!peaks?.length || width <= 0) return;
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 1;
@@ -285,9 +309,18 @@ app.registerExtension({
                 // the visible pixels while retaining their source positions.
                 const firstPixel = Math.max(0, Math.floor(-x));
                 const lastPixel = Math.min(Math.ceil(width), Math.ceil(ctx.canvas.clientWidth - x));
+                const duration = clipDuration(data);
+                const sourceDuration = Number(data.source_duration ?? data.duration) || duration;
+                const sourceStart = clipSourceStart(data.index);
                 for (let px = firstPixel; px < lastPixel; px++) {
-                    const peak = peaks[Math.min(peaks.length - 1, Math.floor(px / width * peaks.length))] || 0;
-                    const amplitude = peak * height * 0.42;
+                    const localTime = (px + 0.5) / width * duration;
+                    const sourceTime = sourceStart + localTime;
+                    if (sourceTime < 0 || sourceTime >= sourceDuration) continue;
+                    const peak = peaks[Math.min(peaks.length - 1, Math.floor(sourceTime / sourceDuration * peaks.length))] || 0;
+                    let fade = 1;
+                    if (track.fade_in > 0 && localTime < track.fade_in) fade = Math.min(fade, localTime / track.fade_in);
+                    if (track.fade_out > 0 && localTime > duration - track.fade_out) fade = Math.min(fade, (duration - localTime) / track.fade_out);
+                    const amplitude = peak * Math.max(0, fade) * height * 0.42;
                     ctx.moveTo(x + px + 0.5, y + height / 2 - amplitude);
                     ctx.lineTo(x + px + 0.5, y + height / 2 + amplitude);
                 }
@@ -317,7 +350,8 @@ app.registerExtension({
                     const track = settings[index];
                     const y = rowIndex * rowHeight;
                     const x = (track.offset - view.start) / view.span * rect.width;
-                    const width = data.duration / view.span * rect.width;
+                    const duration = clipDuration(data);
+                    const width = duration / view.span * rect.width;
                     ctx.fillStyle = rowIndex % 2 ? "#151b22" : "#12171d";
                     ctx.fillRect(0, y, rect.width, rowHeight);
                     ctx.strokeStyle = "#303844";
@@ -326,7 +360,9 @@ app.registerExtension({
                     ctx.lineTo(rect.width, y + rowHeight / 2);
                     ctx.stroke();
                     ctx.globalAlpha = data.enabled ? 1 : 0.28;
-                    drawPeaks(ctx, data.peaks, x, y, width, rowHeight, track.color);
+                    ctx.fillStyle = `${track.color}18`;
+                    ctx.fillRect(x, y + 1, width, rowHeight - 2);
+                    drawPeaks(ctx, data, track, x, y, width, rowHeight, track.color);
                     ctx.globalAlpha = 1;
                     ctx.fillStyle = track.color;
                     ctx.font = "bold 11px sans-serif";
@@ -354,6 +390,12 @@ app.registerExtension({
                     ctx.moveTo(fadeInX, y + 1); ctx.lineTo(fadeInX + 8, y + 1); ctx.lineTo(fadeInX, y + 9); ctx.closePath(); ctx.fill();
                     ctx.beginPath();
                     ctx.moveTo(fadeOutX, y + 1); ctx.lineTo(fadeOutX - 8, y + 1); ctx.lineTo(fadeOutX, y + 9); ctx.closePath(); ctx.fill();
+                    ctx.strokeStyle = "#f2f5f8";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y + 13); ctx.lineTo(x, y + rowHeight - 2);
+                    ctx.moveTo(x + width, y + 13); ctx.lineTo(x + width, y + rowHeight - 2);
+                    ctx.stroke();
                 });
                 drawTimeAxis(ctx, { left: 0, right: rect.width, top: 0, bottom: rect.height, start: view.start, end: view.end });
                 if (view.start < 0 && view.end > 0) {
@@ -365,13 +407,17 @@ app.registerExtension({
                     ctx.lineTo(zeroX, rect.height);
                     ctx.stroke();
                 }
-                if (drag?.mode === "fade_in" || drag?.mode === "fade_out") {
-                    const value = settings[drag.index][drag.mode];
-                    const label = `${drag.mode === "fade_in" ? "Fade In" : "Fade Out"} ${value.toFixed(3)}s`;
+                if (["fade_in", "fade_out", "resize_left", "resize_right"].includes(drag?.mode)) {
+                    const canvasBounds = canvas.getBoundingClientRect();
+                    const resizing = drag.mode.startsWith("resize_");
+                    const value = resizing ? Number(settings[drag.index].timeline_duration) : settings[drag.index][drag.mode];
+                    const label = resizing
+                        ? `Clip ${value.toFixed(3)}s`
+                        : `${drag.mode === "fade_in" ? "Fade In" : "Fade Out"} ${value.toFixed(3)}s`;
                     ctx.font = "bold 12px sans-serif";
                     const labelWidth = ctx.measureText(label).width + 12;
-                    const labelX = Math.max(3, Math.min(rect.width - labelWidth - 3, drag.currentX - rect.left + 10));
-                    const labelY = Math.max(18, drag.currentY - rect.top - 8);
+                    const labelX = Math.max(3, Math.min(rect.width - labelWidth - 3, drag.currentX - canvasBounds.left + 10));
+                    const labelY = Math.max(18, drag.currentY - canvasBounds.top - 8);
                     ctx.fillStyle = "rgba(8, 10, 13, 0.92)";
                     ctx.fillRect(labelX, labelY - 15, labelWidth, 20);
                     ctx.fillStyle = "#f2f5f8";
@@ -393,21 +439,31 @@ app.registerExtension({
                 return connectedTracks[row];
             }
 
-            function fadeHandleAt(event) {
+            function handleAt(event) {
                 const data = trackAt(event);
                 if (!data || !renderData.duration) return null;
                 const rect = canvas.getBoundingClientRect();
                 const track = settings[data.index];
                 const view = viewBounds();
                 const x = (track.offset - view.start) / view.span * rect.width;
-                const trackWidth = data.duration / view.span * rect.width;
+                const trackWidth = clipDuration(data) / view.span * rect.width;
                 const pointerX = event.clientX - rect.left;
-                const handles = [
+                const connectedTracks = renderData.tracks || [];
+                const row = connectedTracks.findIndex((item) => item.index === data.index);
+                const rowHeight = rect.height / connectedTracks.length;
+                const localY = event.clientY - rect.top - row * rowHeight;
+                const fadeHandles = [
                     { mode: "fade_in", x: x + track.fade_in / view.span * rect.width },
                     { mode: "fade_out", x: x + trackWidth - track.fade_out / view.span * rect.width },
                 ];
-                const closest = handles.sort((a, b) => Math.abs(pointerX - a.x) - Math.abs(pointerX - b.x))[0];
-                return Math.abs(pointerX - closest.x) <= 10 ? { ...closest, data } : null;
+                const closestFade = fadeHandles.sort((a, b) => Math.abs(pointerX - a.x) - Math.abs(pointerX - b.x))[0];
+                if (localY <= 13 && Math.abs(pointerX - closestFade.x) <= 10) return { ...closestFade, data };
+                const resizeHandles = [
+                    { mode: "resize_left", x },
+                    { mode: "resize_right", x: x + trackWidth },
+                ];
+                const closestResize = resizeHandles.sort((a, b) => Math.abs(pointerX - a.x) - Math.abs(pointerX - b.x))[0];
+                return Math.abs(pointerX - closestResize.x) <= 10 ? { ...closestResize, data } : null;
             }
 
             canvas.addEventListener("pointerdown", (event) => {
@@ -421,25 +477,44 @@ app.registerExtension({
                     return;
                 }
                 if (event.button !== 0) return;
-                const handle = fadeHandleAt(event);
+                // Keep the time scale fixed while editing. When Show All is
+                // active, changing a clip edge or position changes the full
+                // timeline extent; continuously refitting that extent makes a
+                // fixed-length clip appear to shrink near either canvas edge.
+                const editView = viewBounds();
+                viewStart = editView.start;
+                viewEnd = editView.end;
+                showFullTimeline = false;
+                const handle = handleAt(event);
                 if (handle) {
                     drag = {
                         mode: handle.mode,
                         index: data.index,
                         x: event.clientX,
-                        initial: settings[data.index][handle.mode],
+                        initial: handle.mode.startsWith("resize_")
+                            ? clipDuration(data)
+                            : settings[data.index][handle.mode],
+                        initialOffset: settings[data.index].offset,
+                        initialSourceStart: clipSourceStart(data.index),
+                        span: editView.span,
                         currentX: event.clientX,
                         currentY: event.clientY,
                     };
                 } else {
-                    drag = { mode: "offset", index: data.index, x: event.clientX, offset: settings[data.index].offset };
+                    drag = {
+                        mode: "offset",
+                        index: data.index,
+                        x: event.clientX,
+                        offset: settings[data.index].offset,
+                        span: editView.span,
+                    };
                 }
                 canvas.setPointerCapture(event.pointerId);
                 canvas.style.cursor = handle ? "ew-resize" : "grabbing";
             });
             canvas.addEventListener("pointermove", (event) => {
                 if (!drag) {
-                    canvas.style.cursor = fadeHandleAt(event) ? "ew-resize" : "grab";
+                    canvas.style.cursor = handleAt(event) ? "ew-resize" : "grab";
                     return;
                 }
                 const width = canvas.getBoundingClientRect().width;
@@ -450,8 +525,34 @@ app.registerExtension({
                     viewStart = Math.max(extent.start, Math.min(extent.end - drag.span, nextStart));
                     viewEnd = viewStart + drag.span;
                 } else if (drag.mode === "offset") {
-                    settings[drag.index].offset = Math.round((drag.offset + (event.clientX - drag.x) / width * view.span) * 1000) / 1000;
+                    settings[drag.index].offset = Math.round((drag.offset + (event.clientX - drag.x) / width * drag.span) * 1000) / 1000;
                     rowElements[drag.index].offset.value = String(settings[drag.index].offset);
+                } else if (drag.mode === "resize_right") {
+                    const delta = (event.clientX - drag.x) / width * drag.span;
+                    settings[drag.index].timeline_duration = Math.round(Math.max(0.001, Math.min(86400, drag.initial + delta)) * 1000) / 1000;
+                    clampFades(drag.index, settings[drag.index].timeline_duration);
+                    drag.currentX = event.clientX;
+                    drag.currentY = event.clientY;
+                } else if (drag.mode === "resize_left") {
+                    const requested = (event.clientX - drag.x) / width * drag.span;
+                    const minimumDelta = Math.max(
+                        -(86400 - drag.initial),
+                        -86400 - drag.initialOffset,
+                        -86400 - drag.initialSourceStart,
+                    );
+                    const maximumDelta = Math.min(
+                        drag.initial - 0.001,
+                        86400 - drag.initialOffset,
+                        86400 - drag.initialSourceStart,
+                    );
+                    const delta = Math.max(minimumDelta, Math.min(maximumDelta, requested));
+                    settings[drag.index].offset = Math.round((drag.initialOffset + delta) * 1000) / 1000;
+                    settings[drag.index].source_start = Math.round((drag.initialSourceStart + delta) * 1000) / 1000;
+                    settings[drag.index].timeline_duration = Math.round((drag.initial - delta) * 1000) / 1000;
+                    clampFades(drag.index, settings[drag.index].timeline_duration);
+                    rowElements[drag.index].offset.value = String(settings[drag.index].offset);
+                    drag.currentX = event.clientX;
+                    drag.currentY = event.clientY;
                 } else {
                     const direction = drag.mode === "fade_in" ? 1 : -1;
                     setFade(drag.index, drag.mode, drag.initial + direction * (event.clientX - drag.x) / width * view.span);
@@ -474,8 +575,8 @@ app.registerExtension({
                 canvas.style.cursor = "grab";
             });
             canvas.addEventListener("dblclick", (event) => {
-                const handle = fadeHandleAt(event);
-                if (!handle) return;
+                const handle = handleAt(event);
+                if (!handle || !["fade_in", "fade_out"].includes(handle.mode)) return;
                 setFade(handle.data.index, handle.mode, 0);
                 saveSettings();
                 event.preventDefault();

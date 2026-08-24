@@ -23,6 +23,8 @@ def _track_defaults(index: int) -> dict[str, Any]:
         "mute": False,
         "solo": False,
         "offset": 0.0,
+        "source_start": 0.0,
+        "timeline_duration": None,
         "fade_in": 0.0,
         "fade_out": 0.0,
     }
@@ -43,6 +45,12 @@ def parse_track_settings(value: str) -> list[dict[str, Any]]:
             item.update(supplied[index])
         item["gain_db"] = max(-100.0, min(24.0, float(item["gain_db"])))
         item["offset"] = max(-86400.0, min(86400.0, float(item["offset"])))
+        item["source_start"] = max(-86400.0, min(86400.0, float(item["source_start"])))
+        timeline_duration = item.get("timeline_duration")
+        if timeline_duration is None:
+            item["timeline_duration"] = None
+        else:
+            item["timeline_duration"] = max(0.001, min(86400.0, float(timeline_duration)))
         item["fade_in"] = max(0.0, float(item["fade_in"]))
         item["fade_out"] = max(0.0, float(item["fade_out"]))
         item["mute"] = bool(item["mute"])
@@ -60,6 +68,8 @@ def reset_track_values(settings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for item in settings:
         item["gain_db"] = 0.0
         item["offset"] = 0.0
+        item["source_start"] = 0.0
+        item["timeline_duration"] = None
         item["fade_in"] = 0.0
         item["fade_out"] = 0.0
     return settings
@@ -112,6 +122,30 @@ def _waveform_peaks(waveform: torch.Tensor, count: int = 600) -> list[float]:
     return mono.reshape(buckets, -1).amax(dim=1).clamp(0, 1).tolist()
 
 
+def _build_timeline_clip(
+    source: torch.Tensor,
+    sample_rate: int,
+    source_start: float,
+    timeline_duration: float | None,
+) -> tuple[torch.Tensor, float, float]:
+    """Build a non-destructive clip with silence outside the source bounds."""
+    source_duration = source.shape[-1] / sample_rate
+    duration = source_duration if timeline_duration is None else timeline_duration
+    duration = max(1 / sample_rate, float(duration))
+    clip_samples = max(1, round(duration * sample_rate))
+    clip = source.new_zeros((*source.shape[:-1], clip_samples))
+
+    source_start_sample = round(source_start * sample_rate)
+    source_end_sample = source_start_sample + clip_samples
+    copy_start = max(0, source_start_sample)
+    copy_end = min(source.shape[-1], source_end_sample)
+    if copy_end > copy_start:
+        destination_start = copy_start - source_start_sample
+        destination_end = destination_start + copy_end - copy_start
+        clip[..., destination_start:destination_end] = source[..., copy_start:copy_end]
+    return clip, clip_samples / sample_rate, source_duration
+
+
 def mix_audio_tracks(
     tracks: list[dict[str, Any]],
     settings: list[dict[str, Any]],
@@ -127,25 +161,53 @@ def mix_audio_tracks(
     total_samples = 1
     for track in tracks:
         config = settings[track["index"]]
-        waveform = _standardize(track["audio"]["waveform"], int(track["audio"]["sample_rate"]), sample_rate)
+        source_waveform = _standardize(
+            track["audio"]["waveform"], int(track["audio"]["sample_rate"]), sample_rate
+        )
+        source_waveform = source_waveform * (10.0 ** (config["gain_db"] / 20.0))
+        source_peaks = _waveform_peaks(source_waveform)
+        waveform, display_duration, source_duration = _build_timeline_clip(
+            source_waveform,
+            sample_rate,
+            config["source_start"],
+            config["timeline_duration"],
+        )
         waveform = _apply_fades(waveform, sample_rate, config["fade_in"], config["fade_out"])
-        waveform *= 10.0 ** (config["gain_db"] / 20.0)
-        display_duration = waveform.shape[-1] / sample_rate
         display_peaks = _waveform_peaks(waveform)
         offset_samples = round(config["offset"] * sample_rate)
-        source_start = max(0, -offset_samples)
+        timeline_cut_samples = max(0, -offset_samples)
         destination_start = max(0, offset_samples)
-        waveform = waveform[..., source_start:]
+        waveform = waveform[..., timeline_cut_samples:]
         enabled = not config["mute"] and (not any_solo or config["solo"])
         total_samples = max(total_samples, destination_start + waveform.shape[-1])
-        prepared.append((track, config, waveform, destination_start, enabled, display_duration, display_peaks))
+        prepared.append((
+            track,
+            config,
+            waveform,
+            destination_start,
+            enabled,
+            display_duration,
+            display_peaks,
+            source_duration,
+            source_peaks,
+        ))
 
     batch = max(item[2].shape[0] for item in prepared)
     device = prepared[0][2].device
     mixed = torch.zeros((batch, 2, total_samples), dtype=torch.float32, device=device)
     individual: list[dict[str, Any] | None] = [None] * TRACK_COUNT
     timeline = []
-    for track, config, waveform, start, enabled, display_duration, display_peaks in prepared:
+    for (
+        track,
+        config,
+        waveform,
+        start,
+        enabled,
+        display_duration,
+        display_peaks,
+        source_duration,
+        source_peaks,
+    ) in prepared:
         waveform = waveform.to(device)
         if waveform.shape[0] == 1 and batch > 1:
             waveform = waveform.expand(batch, -1, -1)
@@ -165,8 +227,16 @@ def mix_audio_tracks(
             "index": track["index"],
             "duration": display_duration,
             "offset": config["offset"],
+            "source_duration": source_duration,
+            "source_start": config["source_start"],
+            "source_end": min(
+                source_duration,
+                max(0.0, config["source_start"] + display_duration),
+            ),
+            "timeline_duration": display_duration,
             "enabled": enabled,
             "peaks": display_peaks,
+            "source_peaks": source_peaks,
         })
 
     mixed *= 10.0 ** (max(-100.0, min(24.0, master_db)) / 20.0)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from array import array
 import ast
 import importlib.util
+import json
 from pathlib import Path
 
 import torch
@@ -123,6 +124,8 @@ def test_mixer_can_reset_track_values_before_run() -> None:
 
     assert settings[0]["gain_db"] == 0.0
     assert settings[0]["offset"] == 0.0
+    assert settings[0]["source_start"] == 0.0
+    assert settings[0]["timeline_duration"] is None
     assert settings[0]["fade_in"] == 0.0
     assert settings[0]["fade_out"] == 0.0
     assert settings[0]["name"] == "Lead"
@@ -191,3 +194,86 @@ def test_individual_outputs_apply_track_processing_and_mute() -> None:
     assert individual[1] is None
     assert [track["enabled"] for track in payload["tracks"]] == [True, False]
     assert payload["tracks"][0]["offset"] == 0.5
+
+
+def test_mixer_clip_duration_can_trim_restore_and_extend_with_silence() -> None:
+    original = torch.arange(1, 6, dtype=torch.float32).reshape(1, 1, 5)
+    tracks = [{"index": 0, "audio": {"waveform": original, "sample_rate": 1}}]
+
+    def render(duration: float) -> tuple[torch.Tensor, dict]:
+        settings = parse_track_settings(json.dumps([{"timeline_duration": duration}]))
+        mixed, _, payload = mix_audio_tracks(tracks, settings, 0.0, False)
+        return mixed["waveform"][0, 0], payload
+
+    three_seconds, _ = render(3)
+    assert torch.equal(three_seconds, torch.tensor([1.0, 2.0, 3.0]))
+
+    restored, _ = render(5)
+    assert torch.equal(restored, torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0]))
+
+    eight_seconds, payload = render(8)
+    assert torch.equal(eight_seconds, torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 0.0, 0.0, 0.0]))
+    assert payload["duration"] == 8.0
+    assert payload["tracks"][0]["source_duration"] == 5.0
+    assert payload["tracks"][0]["timeline_duration"] == 8.0
+    assert payload["tracks"][0]["source_end"] == 5.0
+
+    ten_seconds, _ = render(10)
+    assert torch.equal(ten_seconds[:5], original[0, 0])
+    assert torch.count_nonzero(ten_seconds[5:]) == 0
+
+    four_seconds, _ = render(4)
+    assert torch.equal(four_seconds, torch.tensor([1.0, 2.0, 3.0, 4.0]))
+
+    eight_again, _ = render(8)
+    assert torch.equal(eight_again[:5], original[0, 0])
+    assert torch.count_nonzero(eight_again[5:]) == 0
+    assert torch.equal(original, torch.arange(1, 6, dtype=torch.float32).reshape(1, 1, 5))
+
+
+def test_mixer_left_edge_recovers_source_and_can_add_leading_silence() -> None:
+    original = torch.arange(1, 6, dtype=torch.float32).reshape(1, 1, 5)
+    tracks = [{"index": 0, "audio": {"waveform": original, "sample_rate": 1}}]
+
+    trimmed = parse_track_settings(
+        '[{"offset": 2, "source_start": 2, "timeline_duration": 3}]'
+    )
+    mixed, _, _ = mix_audio_tracks(tracks, trimmed, 0.0, False)
+    assert torch.equal(mixed["waveform"][0, 0], torch.tensor([0.0, 0.0, 3.0, 4.0, 5.0]))
+
+    restored = parse_track_settings(
+        '[{"offset": 0, "source_start": 0, "timeline_duration": 5}]'
+    )
+    mixed, _, _ = mix_audio_tracks(tracks, restored, 0.0, False)
+    assert torch.equal(mixed["waveform"][0, 0], original[0, 0])
+
+    leading_silence = parse_track_settings(
+        '[{"offset": 1, "source_start": -2, "timeline_duration": 7}]'
+    )
+    mixed, _, payload = mix_audio_tracks(tracks, leading_silence, 0.0, False)
+    assert torch.equal(
+        mixed["waveform"][0, 0],
+        torch.tensor([0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0]),
+    )
+    assert payload["tracks"][0]["source_start"] == -2.0
+    assert payload["tracks"][0]["source_end"] == 5.0
+
+
+def test_mixer_silent_extension_preserves_other_track_positions() -> None:
+    tracks = [
+        {"index": 0, "audio": {"waveform": torch.ones((1, 1, 5)), "sample_rate": 1}},
+        {"index": 1, "audio": {"waveform": torch.full((1, 1, 2), 2.0), "sample_rate": 1}},
+    ]
+    settings = parse_track_settings(
+        '[{"timeline_duration": 8}, {"offset": 6}]'
+    )
+
+    mixed, individual, payload = mix_audio_tracks(tracks, settings, 0.0, False)
+
+    assert torch.equal(
+        mixed["waveform"][0, 0],
+        torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 2.0, 2.0]),
+    )
+    assert payload["duration"] == 8.0
+    assert individual[0]["waveform"].shape[-1] == 8
+    assert torch.count_nonzero(individual[0]["waveform"][..., 5:]) == 0
