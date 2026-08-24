@@ -30,6 +30,24 @@ def _track_defaults(index: int) -> dict[str, Any]:
     }
 
 
+def _sanitize_clip(value: dict[str, Any], fallback_source: int) -> dict[str, Any]:
+    timeline_duration = value.get("timeline_duration")
+    return {
+        "id": str(value.get("id") or f"clip-{fallback_source}"),
+        "source_index": max(0, min(TRACK_COUNT - 1, int(value.get("source_index", fallback_source)))),
+        "gain_db": max(-100.0, min(24.0, float(value.get("gain_db", 0.0)))),
+        "offset": max(-86400.0, min(86400.0, float(value.get("offset", 0.0)))),
+        "source_start": max(-86400.0, min(86400.0, float(value.get("source_start", 0.0)))),
+        "timeline_duration": (
+            None
+            if timeline_duration is None
+            else max(0.001, min(86400.0, float(timeline_duration)))
+        ),
+        "fade_in": max(0.0, float(value.get("fade_in", 0.0))),
+        "fade_out": max(0.0, float(value.get("fade_out", 0.0))),
+    }
+
+
 def parse_track_settings(value: str) -> list[dict[str, Any]]:
     """Parse serialized UI settings while retaining safe defaults."""
     try:
@@ -43,6 +61,13 @@ def parse_track_settings(value: str) -> list[dict[str, Any]]:
         item = _track_defaults(index)
         if index < len(supplied) and isinstance(supplied[index], dict):
             item.update(supplied[index])
+        if "clips" in item:
+            clips = item["clips"] if isinstance(item["clips"], list) else []
+            item["clips"] = [
+                _sanitize_clip(clip, index)
+                for clip in clips
+                if isinstance(clip, dict)
+            ]
         item["gain_db"] = max(-100.0, min(24.0, float(item["gain_db"])))
         item["offset"] = max(-86400.0, min(86400.0, float(item["offset"])))
         item["source_start"] = max(-86400.0, min(86400.0, float(item["source_start"])))
@@ -64,7 +89,7 @@ def parse_track_settings(value: str) -> list[dict[str, Any]]:
 
 
 def reset_track_values(settings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Reset per-track numeric controls while preserving identity and switches."""
+    """Reset edits and rebuild one source clip per connected mixer input."""
     for item in settings:
         item["gain_db"] = 0.0
         item["offset"] = 0.0
@@ -72,6 +97,10 @@ def reset_track_values(settings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         item["timeline_duration"] = None
         item["fade_in"] = 0.0
         item["fade_out"] = 0.0
+        # An explicit clips list is the edit buffer used by Copy/Paste. Remove
+        # it entirely so the next render reconstructs the default clip from
+        # the audio currently connected to this lane.
+        item.pop("clips", None)
     return settings
 
 
@@ -156,50 +185,74 @@ def mix_audio_tracks(
     if not tracks:
         raise ValueError("Connect at least one AUDIO input")
     sample_rate = max(int(track["audio"]["sample_rate"]) for track in tracks)
-    any_solo = any(settings[track["index"]]["solo"] for track in tracks)
+    sources = {track["index"]: track["audio"] for track in tracks}
+
+    def lane_clips(index: int) -> list[dict[str, Any]]:
+        config = settings[index]
+        if "clips" in config:
+            return [clip for clip in config["clips"] if clip["source_index"] in sources]
+        if index not in sources:
+            return []
+        return [_sanitize_clip({
+            "id": f"source-{index}",
+            "source_index": index,
+            "gain_db": config["gain_db"],
+            "offset": config["offset"],
+            "source_start": config["source_start"],
+            "timeline_duration": config["timeline_duration"],
+            "fade_in": config["fade_in"],
+            "fade_out": config["fade_out"],
+        }, index)]
+
+    clips_by_lane = [lane_clips(index) for index in range(TRACK_COUNT)]
+    any_solo = any(settings[index]["solo"] and clips_by_lane[index] for index in range(TRACK_COUNT))
     prepared = []
     total_samples = 1
-    for track in tracks:
-        config = settings[track["index"]]
-        source_waveform = _standardize(
-            track["audio"]["waveform"], int(track["audio"]["sample_rate"]), sample_rate
-        )
-        source_waveform = source_waveform * (10.0 ** (config["gain_db"] / 20.0))
-        source_peaks = _waveform_peaks(source_waveform)
-        waveform, display_duration, source_duration = _build_timeline_clip(
-            source_waveform,
-            sample_rate,
-            config["source_start"],
-            config["timeline_duration"],
-        )
-        waveform = _apply_fades(waveform, sample_rate, config["fade_in"], config["fade_out"])
-        display_peaks = _waveform_peaks(waveform)
-        offset_samples = round(config["offset"] * sample_rate)
-        timeline_cut_samples = max(0, -offset_samples)
-        destination_start = max(0, offset_samples)
-        waveform = waveform[..., timeline_cut_samples:]
-        enabled = not config["mute"] and (not any_solo or config["solo"])
-        total_samples = max(total_samples, destination_start + waveform.shape[-1])
-        prepared.append((
-            track,
-            config,
-            waveform,
-            destination_start,
-            enabled,
-            display_duration,
-            display_peaks,
-            source_duration,
-            source_peaks,
-        ))
+    standardized_sources = {
+        index: _standardize(audio["waveform"], int(audio["sample_rate"]), sample_rate)
+        for index, audio in sources.items()
+    }
+    for lane_index, clips in enumerate(clips_by_lane):
+        lane = settings[lane_index]
+        enabled = not lane["mute"] and (not any_solo or lane["solo"])
+        for clip in clips:
+            source_waveform = standardized_sources[clip["source_index"]]
+            source_waveform = source_waveform * (10.0 ** (clip["gain_db"] / 20.0))
+            source_peaks = _waveform_peaks(source_waveform)
+            waveform, display_duration, source_duration = _build_timeline_clip(
+                source_waveform,
+                sample_rate,
+                clip["source_start"],
+                clip["timeline_duration"],
+            )
+            waveform = _apply_fades(waveform, sample_rate, clip["fade_in"], clip["fade_out"])
+            display_peaks = _waveform_peaks(waveform)
+            offset_samples = round(clip["offset"] * sample_rate)
+            timeline_cut_samples = max(0, -offset_samples)
+            destination_start = max(0, offset_samples)
+            waveform = waveform[..., timeline_cut_samples:]
+            total_samples = max(total_samples, destination_start + waveform.shape[-1])
+            prepared.append((
+                lane_index,
+                clip,
+                waveform,
+                destination_start,
+                enabled,
+                display_duration,
+                display_peaks,
+                source_duration,
+                source_peaks,
+            ))
 
-    batch = max(item[2].shape[0] for item in prepared)
-    device = prepared[0][2].device
+    batch = max((item[2].shape[0] for item in prepared), default=standardized_sources[tracks[0]["index"]].shape[0])
+    device = next(iter(standardized_sources.values())).device
     mixed = torch.zeros((batch, 2, total_samples), dtype=torch.float32, device=device)
     individual: list[dict[str, Any] | None] = [None] * TRACK_COUNT
-    timeline = []
+    lane_outputs: list[torch.Tensor | None] = [None] * TRACK_COUNT
+    timeline_clips: list[list[dict[str, Any]]] = [[] for _ in range(TRACK_COUNT)]
     for (
-        track,
-        config,
+        lane_index,
+        clip,
         waveform,
         start,
         enabled,
@@ -215,29 +268,50 @@ def mix_audio_tracks(
             raise ValueError("All audio batches must have the same size or a batch size of one")
         if enabled:
             mixed[..., start:start + waveform.shape[-1]] += waveform
-            track_output = torch.zeros_like(mixed)
-            track_output[..., start:start + waveform.shape[-1]] = waveform
-            individual[track["index"]] = {
-                "waveform": track_output,
-                "sample_rate": sample_rate,
-                "alice_lab_audio_waveform_color": config["color"],
-                "alice_lab_audio_tools_track_name": config["name"],
-            }
-        timeline.append({
-            "index": track["index"],
+            if lane_outputs[lane_index] is None:
+                lane_outputs[lane_index] = torch.zeros_like(mixed)
+            lane_outputs[lane_index][..., start:start + waveform.shape[-1]] += waveform
+        timeline_clips[lane_index].append({
+            "id": clip["id"],
+            "source_index": clip["source_index"],
             "duration": display_duration,
-            "offset": config["offset"],
+            "offset": clip["offset"],
+            "gain_db": clip["gain_db"],
+            "fade_in": clip["fade_in"],
+            "fade_out": clip["fade_out"],
             "source_duration": source_duration,
-            "source_start": config["source_start"],
+            "source_start": clip["source_start"],
             "source_end": min(
                 source_duration,
-                max(0.0, config["source_start"] + display_duration),
+                max(0.0, clip["source_start"] + display_duration),
             ),
             "timeline_duration": display_duration,
             "enabled": enabled,
             "peaks": display_peaks,
             "source_peaks": source_peaks,
         })
+
+    timeline = []
+    for index in range(TRACK_COUNT):
+        config = settings[index]
+        enabled = not config["mute"] and (not any_solo or config["solo"])
+        if lane_outputs[index] is not None:
+            individual[index] = {
+                "waveform": lane_outputs[index],
+                "sample_rate": sample_rate,
+                "alice_lab_audio_waveform_color": config["color"],
+                "alice_lab_audio_tools_track_name": config["name"],
+            }
+        lane_payload = {
+            "index": index,
+            "enabled": enabled,
+            "clips": timeline_clips[index],
+        }
+        # Retain the original single-clip payload fields for older frontends
+        # and workflows while exposing the complete clips list to the new UI.
+        if len(timeline_clips[index]) == 1:
+            lane_payload.update(timeline_clips[index][0])
+        timeline.append(lane_payload)
 
     mixed *= 10.0 ** (max(-100.0, min(24.0, master_db)) / 20.0)
     peak_before_limit = float(mixed.abs().max().item())
@@ -276,6 +350,13 @@ class AliceLabAudioMixer:
     FUNCTION = "mix"
     CATEGORY = "ALICE_Lab/Audio"
     DESCRIPTION = "Mix multiple audio tracks with gain, mute, solo, offset, and fades."
+
+    @classmethod
+    def IS_CHANGED(cls, reset_before_run: bool = False, **kwargs):
+        # The connected AUDIO source can be replaced while the serialized edit
+        # settings remain identical. Always rebuild the lightweight Mixer
+        # result for a queued run so neither audio nor UI metadata is stale.
+        return float("nan")
 
     def mix(
         self,

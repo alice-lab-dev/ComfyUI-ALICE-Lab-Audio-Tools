@@ -231,7 +231,7 @@ Controls:
 - Linear fade in and fade out.
 - Master gain from -100 dB to +24 dB.
 - Optional peak-based clipping protection.
-- `reset_before_run` optionally resets every track's gain, position, fade in, and fade out to zero before the current run.
+- `reset_before_run` clears clip edits and copied/pasted clips, resets gain, position, and fades, and rebuilds one default clip from each currently connected input.
 - Shared timeline with adaptive time ticks, mouse-wheel zoom, right-drag panning, and `Show All` to fit every positioned waveform, including waveforms moved outside the previous view.
 
 A positive position delays a track. A negative position removes samples that fall before the shared timeline starts. Waveforms and fade handles can be edited directly in the node UI.

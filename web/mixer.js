@@ -51,6 +51,13 @@ app.registerExtension({
             let viewStart = 0;
             let viewEnd = 0;
             let showFullTimeline = true;
+            let selectedClip = null;
+            let clipClipboard = null;
+            let clipboardVisual = null;
+            let rightDragMoved = false;
+            let contextMenu = null;
+            let contextMenuDismiss = null;
+            const visualClips = new Map();
 
             function readStoredSettings() {
                 try {
@@ -90,7 +97,7 @@ app.registerExtension({
             const footer = document.createElement("div");
             footer.style.cssText = "display:flex;gap:12px;align-items:center;color:#aeb9c4";
             const help = document.createElement("span");
-            help.textContent = "Wheel: zoom · Right-drag: pan · Drag waveform: position · Drag clip edges: length · Top handles: fades";
+            help.textContent = "Right-click: edit · Right-drag: pan · Wheel: zoom · Drag clip: position · Edges: length · Top: fades";
             help.style.flex = "1";
             const viewLabel = document.createElement("span");
             viewLabel.style.whiteSpace = "nowrap";
@@ -104,28 +111,123 @@ app.registerExtension({
                 return node.inputs?.find((input) => input.name === `audio_${index + 1}`)?.link != null;
             }
 
-            function renderedTrack(index) {
+            function laneData(index) {
                 return renderData.tracks?.find((track) => track.index === index);
             }
 
             function clipDuration(data) {
-                const stored = Number(settings[data.index]?.timeline_duration);
-                if (Number.isFinite(stored) && stored > 0) return stored;
                 return Number(data.timeline_duration ?? data.duration) || 0.001;
             }
 
-            function clipSourceStart(index) {
-                const value = Number(settings[index]?.source_start);
+            function clipSourceStart(data) {
+                const value = Number(data.source_start);
                 return Number.isFinite(value) ? value : 0;
             }
 
+            function payloadClips(index) {
+                const lane = laneData(index);
+                if (Array.isArray(lane?.clips)) return lane.clips;
+                return lane?.duration ? [{ ...lane, id: `source-${index}`, source_index: index }] : [];
+            }
+
+            function clipStateFromData(data, fallbackSource) {
+                return {
+                    id: String(data.id || `clip-${Date.now()}-${Math.random().toString(36).slice(2)}`),
+                    source_index: Number.isInteger(data.source_index) ? data.source_index : fallbackSource,
+                    gain_db: Number(data.gain_db) || 0,
+                    offset: Number(data.offset) || 0,
+                    source_start: Number(data.source_start) || 0,
+                    timeline_duration: Number(data.timeline_duration ?? data.duration) || null,
+                    fade_in: Number(data.fade_in) || 0,
+                    fade_out: Number(data.fade_out) || 0,
+                };
+            }
+
+            function ensureLaneClips(index) {
+                if (!Array.isArray(settings[index].clips)) {
+                    settings[index].clips = payloadClips(index).map((clip) => clipStateFromData(clip, index));
+                }
+                return settings[index].clips;
+            }
+
+            function allClipData(index) {
+                if (!Array.isArray(settings[index].clips)) return payloadClips(index);
+                const payload = payloadClips(index);
+                return settings[index].clips.map((state) => {
+                    const visual = payload.find((clip) => clip.id === state.id)
+                        || visualClips.get(state.id)
+                        || renderData.tracks?.flatMap((lane) => lane.clips || []).find((clip) => clip.source_index === state.source_index)
+                        || null;
+                    // A serialized edit state without current audio metadata
+                    // used to be drawn as an empty selection rectangle. Do not
+                    // render it until its source has produced a real waveform.
+                    return visual ? { ...visual, ...state } : null;
+                }).filter(Boolean);
+            }
+
+            function pruneDisconnectedClips() {
+                let changed = false;
+                settings.forEach((track, index) => {
+                    if (!Array.isArray(track.clips)) return;
+                    const retained = track.clips.filter((clip) => connected(clip.source_index));
+                    if (retained.length === track.clips.length) return;
+                    changed = true;
+                    if (!retained.length && !connected(index)) delete track.clips;
+                    else track.clips = retained;
+                });
+                if (selectedClip && !findClip(selectedClip.trackIndex, selectedClip.id)) selectedClip = null;
+                if (changed) {
+                    settingsWidget.value = JSON.stringify(settings);
+                    settingsWidget.callback?.(settingsWidget.value);
+                    node.graph?.setDirtyCanvas(true, true);
+                }
+            }
+
+            function clearConnectionRenderState() {
+                pruneDisconnectedClips();
+                renderData = { duration: 0, peak: 0, tracks: [], mix_peaks: [] };
+                visualClips.clear();
+                selectedClip = null;
+                clipClipboard = null;
+                clipboardVisual = null;
+                drag = null;
+                closeContextMenu();
+                refreshRows();
+            }
+
+            function findClip(index, id) {
+                return allClipData(index).find((clip) => clip.id === id) || null;
+            }
+
+            function clipState(index, id) {
+                return ensureLaneClips(index).find((clip) => clip.id === id) || null;
+            }
+
+            function activeClipState(index, create = false) {
+                if (!Array.isArray(settings[index].clips)) {
+                    if (!create) return null;
+                    ensureLaneClips(index);
+                }
+                const clips = settings[index].clips;
+                if (!clips.length) return null;
+                if (selectedClip?.trackIndex === index) {
+                    const selected = clips.find((clip) => clip.id === selectedClip.id);
+                    if (selected) return selected;
+                }
+                return clips[0];
+            }
+
+            function newClipId() {
+                return `clip-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            }
+
             function timelineExtent() {
-                const tracks = renderData.tracks || [];
-                const start = Math.min(0, ...tracks.map((data) => settings[data.index].offset));
+                const clips = Array.from({ length: TRACK_COUNT }, (_, index) => allClipData(index)).flat();
+                const start = Math.min(0, ...clips.map((clip) => clip.offset));
                 const end = Math.max(
                     0.001,
-                    renderData.duration || 0,
-                    ...tracks.map((data) => settings[data.index].offset + clipDuration(data)),
+                    clips.length ? 0 : (renderData.duration || 0),
+                    ...clips.map((clip) => clip.offset + clipDuration(clip)),
                 );
                 return { start, end, span: Math.max(0.001, end - start) };
             }
@@ -152,21 +254,40 @@ app.registerExtension({
             showAllButton.addEventListener("click", showAll);
 
             function setFade(index, kind, value) {
-                const track = settings[index];
-                const data = renderedTrack(index);
-                const other = kind === "fade_in" ? track.fade_out : track.fade_in;
-                const maximum = data ? Math.max(0, clipDuration(data) - other) : 86400;
-                track[kind] = Math.round(Math.max(0, Math.min(maximum, value)) * 1000) / 1000;
+                const clip = activeClipState(index, true);
+                if (!clip) return;
+                const data = findClip(index, clip.id) || clip;
+                const other = kind === "fade_in" ? clip.fade_out : clip.fade_in;
+                const maximum = Math.max(0, clipDuration(data) - other);
+                clip[kind] = Math.round(Math.max(0, Math.min(maximum, value)) * 1000) / 1000;
                 const input = kind === "fade_in" ? rowElements[index]?.fadeIn : rowElements[index]?.fadeOut;
-                if (input) input.value = String(track[kind]);
+                if (input) input.value = String(clip[kind]);
             }
 
             function clampFades(index, duration) {
-                const track = settings[index];
-                track.fade_in = Math.min(track.fade_in, duration);
-                track.fade_out = Math.min(track.fade_out, Math.max(0, duration - track.fade_in));
-                rowElements[index].fadeIn.value = String(track.fade_in);
-                rowElements[index].fadeOut.value = String(track.fade_out);
+                const clip = activeClipState(index, true);
+                if (!clip) return;
+                clip.fade_in = Math.min(clip.fade_in, duration);
+                clip.fade_out = Math.min(clip.fade_out, Math.max(0, duration - clip.fade_in));
+                rowElements[index].fadeIn.value = String(clip.fade_in);
+                rowElements[index].fadeOut.value = String(clip.fade_out);
+            }
+
+            function setClipValue(index, key, value) {
+                const clip = activeClipState(index, true);
+                if (clip) clip[key] = value;
+                else settings[index][key] = value;
+                saveSettings();
+            }
+
+            function syncRowToSelection(index) {
+                const controls = rowElements[index];
+                if (!controls) return;
+                const clip = activeClipState(index, false);
+                controls.gain.value = String(clip?.gain_db ?? settings[index].gain_db);
+                controls.offset.value = String(clip?.offset ?? settings[index].offset);
+                controls.fadeIn.value = String(clip?.fade_in ?? settings[index].fade_in);
+                controls.fadeOut.value = String(clip?.fade_out ?? settings[index].fade_out);
             }
 
             function saveSettings() {
@@ -219,17 +340,35 @@ app.registerExtension({
                     saveSettings();
                 };
                 updateButtons();
-                const labeled = (text, input) => {
+                const labeled = (text, input, onReset) => {
                     const label = document.createElement("label");
                     label.style.cssText = "display:flex;align-items:center;gap:3px;white-space:nowrap";
-                    label.append(text, input);
+                    const caption = document.createElement("span");
+                    caption.textContent = text;
+                    caption.title = `Double-click to reset ${text}`;
+                    caption.style.cursor = "pointer";
+                    caption.addEventListener("dblclick", (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onReset();
+                    });
+                    label.append(caption, input);
                     return label;
                 };
-                const gain = numberInput(track.gain_db, -100, 24, 0.1, (value) => { track.gain_db = value; saveSettings(); });
-                const offset = numberInput(track.offset, -86400, 86400, 0.01, (value) => { track.offset = value; saveSettings(); });
+                const gain = numberInput(track.gain_db, -100, 24, 0.1, (value) => setClipValue(index, "gain_db", value));
+                const offset = numberInput(track.offset, -86400, 86400, 0.01, (value) => setClipValue(index, "offset", value));
                 const fadeIn = numberInput(track.fade_in, 0, 86400, 0.01, (value) => { setFade(index, "fade_in", value); saveSettings(); });
                 const fadeOut = numberInput(track.fade_out, 0, 86400, 0.01, (value) => { setFade(index, "fade_out", value); saveSettings(); });
-                row.append(color, name, mute, solo, labeled("dB", gain), labeled("Pos", offset), labeled("Fade In", fadeIn), labeled("Fade Out", fadeOut));
+                row.append(
+                    color,
+                    name,
+                    mute,
+                    solo,
+                    labeled("dB", gain, () => { gain.value = "0"; setClipValue(index, "gain_db", 0); }),
+                    labeled("Pos", offset, () => { offset.value = "0"; setClipValue(index, "offset", 0); }),
+                    labeled("Fade In", fadeIn, () => { fadeIn.value = "0"; setClipValue(index, "fade_in", 0); }),
+                    labeled("Fade Out", fadeOut, () => { fadeOut.value = "0"; setClipValue(index, "fade_out", 0); }),
+                );
                 rows.append(row);
                 return { row, name, mute, solo, gain, offset, fadeIn, fadeOut, updateButtons };
             });
@@ -242,12 +381,22 @@ app.registerExtension({
                     track.timeline_duration = null;
                     track.fade_in = 0;
                     track.fade_out = 0;
+                    delete track.clips;
                     const controls = rowElements[index];
                     controls.gain.value = "0";
                     controls.offset.value = "0";
                     controls.fadeIn.value = "0";
                     controls.fadeOut.value = "0";
                 });
+                // Copy/Paste and rendered waveforms are transient edit
+                // buffers. A reset run must rebuild them from the inputs that
+                // are connected now, not from the preceding execution.
+                clipClipboard = null;
+                clipboardVisual = null;
+                selectedClip = null;
+                visualClips.clear();
+                closeContextMenu();
+                renderData = { duration: 0, peak: 0, tracks: [], mix_peaks: [] };
                 settingsWidget.value = JSON.stringify(settings);
                 settingsWidget.callback?.(settingsWidget.value);
                 node.graph?.setDirtyCanvas(true, true);
@@ -274,10 +423,7 @@ app.registerExtension({
                     }
                     const controls = rowElements[index];
                     controls.name.value = settings[index].name;
-                    controls.gain.value = String(settings[index].gain_db);
-                    controls.offset.value = String(settings[index].offset);
-                    controls.fadeIn.value = String(settings[index].fade_in);
-                    controls.fadeOut.value = String(settings[index].fade_out);
+                    syncRowToSelection(index);
                     controls.updateButtons();
                 });
                 if (normalized) {
@@ -290,7 +436,7 @@ app.registerExtension({
             function refreshRows() {
                 let count = 0;
                 rowElements.forEach(({ row }, index) => {
-                    const show = connected(index);
+                    const show = connected(index) || allClipData(index).length > 0;
                     row.style.display = show ? "grid" : "none";
                     if (show) count++;
                 });
@@ -311,7 +457,7 @@ app.registerExtension({
                 const lastPixel = Math.min(Math.ceil(width), Math.ceil(ctx.canvas.clientWidth - x));
                 const duration = clipDuration(data);
                 const sourceDuration = Number(data.source_duration ?? data.duration) || duration;
-                const sourceStart = clipSourceStart(data.index);
+                const sourceStart = clipSourceStart(data);
                 for (let px = firstPixel; px < lastPixel; px++) {
                     const localTime = (px + 0.5) / width * duration;
                     const sourceTime = sourceStart + localTime;
@@ -342,16 +488,13 @@ app.registerExtension({
                 ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
                 ctx.fillStyle = "#101419";
                 ctx.fillRect(0, 0, rect.width, rect.height);
-                const tracks = renderData.tracks || [];
+                const tracks = Array.from({ length: TRACK_COUNT }, (_, index) => laneData(index) || ({ index, enabled: true, clips: [] }));
                 const view = viewBounds();
-                const rowHeight = tracks.length ? rect.height / tracks.length : rect.height;
-                tracks.forEach((data, rowIndex) => {
-                    const index = data.index;
+                const rowHeight = rect.height / TRACK_COUNT;
+                tracks.forEach((lane, rowIndex) => {
+                    const index = lane.index;
                     const track = settings[index];
                     const y = rowIndex * rowHeight;
-                    const x = (track.offset - view.start) / view.span * rect.width;
-                    const duration = clipDuration(data);
-                    const width = duration / view.span * rect.width;
                     ctx.fillStyle = rowIndex % 2 ? "#151b22" : "#12171d";
                     ctx.fillRect(0, y, rect.width, rowHeight);
                     ctx.strokeStyle = "#303844";
@@ -359,11 +502,6 @@ app.registerExtension({
                     ctx.moveTo(0, y + rowHeight / 2);
                     ctx.lineTo(rect.width, y + rowHeight / 2);
                     ctx.stroke();
-                    ctx.globalAlpha = data.enabled ? 1 : 0.28;
-                    ctx.fillStyle = `${track.color}18`;
-                    ctx.fillRect(x, y + 1, width, rowHeight - 2);
-                    drawPeaks(ctx, data, track, x, y, width, rowHeight, track.color);
-                    ctx.globalAlpha = 1;
                     ctx.fillStyle = track.color;
                     ctx.font = "bold 11px sans-serif";
                     ctx.fillText(track.name, 6, y + 13);
@@ -374,28 +512,43 @@ app.registerExtension({
                         ctx.fillText("±1 FS", rect.width - 5, y + 11);
                         ctx.textAlign = "left";
                     }
-                    if (track.fade_in > 0) {
-                        ctx.strokeStyle = "#e7edf3";
-                        ctx.beginPath(); ctx.moveTo(x, y + rowHeight); ctx.lineTo(x + track.fade_in / view.span * rect.width, y); ctx.stroke();
-                    }
-                    if (track.fade_out > 0) {
-                        const end = x + width;
-                        ctx.strokeStyle = "#e7edf3";
-                        ctx.beginPath(); ctx.moveTo(end - track.fade_out / view.span * rect.width, y); ctx.lineTo(end, y + rowHeight); ctx.stroke();
-                    }
-                    const fadeInX = x + track.fade_in / view.span * rect.width;
-                    const fadeOutX = x + width - track.fade_out / view.span * rect.width;
-                    ctx.fillStyle = "#f2f5f8";
-                    ctx.beginPath();
-                    ctx.moveTo(fadeInX, y + 1); ctx.lineTo(fadeInX + 8, y + 1); ctx.lineTo(fadeInX, y + 9); ctx.closePath(); ctx.fill();
-                    ctx.beginPath();
-                    ctx.moveTo(fadeOutX, y + 1); ctx.lineTo(fadeOutX - 8, y + 1); ctx.lineTo(fadeOutX, y + 9); ctx.closePath(); ctx.fill();
-                    ctx.strokeStyle = "#f2f5f8";
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.moveTo(x, y + 13); ctx.lineTo(x, y + rowHeight - 2);
-                    ctx.moveTo(x + width, y + 13); ctx.lineTo(x + width, y + rowHeight - 2);
-                    ctx.stroke();
+                    allClipData(index).forEach((clip) => {
+                        const x = (clip.offset - view.start) / view.span * rect.width;
+                        const duration = clipDuration(clip);
+                        const width = duration / view.span * rect.width;
+                        ctx.globalAlpha = lane.enabled ? 1 : 0.28;
+                        ctx.fillStyle = `${track.color}24`;
+                        ctx.fillRect(x, y + 1, width, rowHeight - 2);
+                        drawPeaks(ctx, clip, clip, x, y, width, rowHeight, track.color);
+                        ctx.globalAlpha = 1;
+                        if (selectedClip?.trackIndex === index && selectedClip.id === clip.id) {
+                            ctx.strokeStyle = "#ffd166";
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect(x, y + 1, width, rowHeight - 2);
+                        }
+                        if (clip.fade_in > 0) {
+                            ctx.strokeStyle = "#e7edf3";
+                            ctx.beginPath(); ctx.moveTo(x, y + rowHeight); ctx.lineTo(x + clip.fade_in / view.span * rect.width, y); ctx.stroke();
+                        }
+                        if (clip.fade_out > 0) {
+                            const end = x + width;
+                            ctx.strokeStyle = "#e7edf3";
+                            ctx.beginPath(); ctx.moveTo(end - clip.fade_out / view.span * rect.width, y); ctx.lineTo(end, y + rowHeight); ctx.stroke();
+                        }
+                        const fadeInX = x + clip.fade_in / view.span * rect.width;
+                        const fadeOutX = x + width - clip.fade_out / view.span * rect.width;
+                        ctx.fillStyle = "#f2f5f8";
+                        ctx.beginPath();
+                        ctx.moveTo(fadeInX, y + 1); ctx.lineTo(fadeInX + 8, y + 1); ctx.lineTo(fadeInX, y + 9); ctx.closePath(); ctx.fill();
+                        ctx.beginPath();
+                        ctx.moveTo(fadeOutX, y + 1); ctx.lineTo(fadeOutX - 8, y + 1); ctx.lineTo(fadeOutX, y + 9); ctx.closePath(); ctx.fill();
+                        ctx.strokeStyle = "#f2f5f8";
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(x, y + 13); ctx.lineTo(x, y + rowHeight - 2);
+                        ctx.moveTo(x + width, y + 13); ctx.lineTo(x + width, y + rowHeight - 2);
+                        ctx.stroke();
+                    });
                 });
                 drawTimeAxis(ctx, { left: 0, right: rect.width, top: 0, bottom: rect.height, start: view.start, end: view.end });
                 if (view.start < 0 && view.end > 0) {
@@ -410,7 +563,8 @@ app.registerExtension({
                 if (["fade_in", "fade_out", "resize_left", "resize_right"].includes(drag?.mode)) {
                     const canvasBounds = canvas.getBoundingClientRect();
                     const resizing = drag.mode.startsWith("resize_");
-                    const value = resizing ? Number(settings[drag.index].timeline_duration) : settings[drag.index][drag.mode];
+                    const state = activeClipState(drag.index, false);
+                    const value = resizing ? Number(state?.timeline_duration) : state?.[drag.mode];
                     const label = resizing
                         ? `Clip ${value.toFixed(3)}s`
                         : `${drag.mode === "fade_in" ? "Fade In" : "Fade Out"} ${value.toFixed(3)}s`;
@@ -432,51 +586,194 @@ app.registerExtension({
             }
 
             function trackAt(event) {
-                const connectedTracks = renderData.tracks || [];
-                if (!connectedTracks.length) return null;
                 const rect = canvas.getBoundingClientRect();
-                const row = Math.max(0, Math.min(connectedTracks.length - 1, Math.floor((event.clientY - rect.top) / rect.height * connectedTracks.length)));
-                return connectedTracks[row];
+                const index = Math.max(0, Math.min(TRACK_COUNT - 1, Math.floor((event.clientY - rect.top) / rect.height * TRACK_COUNT)));
+                return laneData(index) || { index, enabled: true, clips: [] };
+            }
+
+            function eventTime(event) {
+                const rect = canvas.getBoundingClientRect();
+                const view = viewBounds();
+                return view.start + Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width))) * view.span;
+            }
+
+            function clipAt(event) {
+                const lane = trackAt(event);
+                const rect = canvas.getBoundingClientRect();
+                const view = viewBounds();
+                const pointerX = event.clientX - rect.left;
+                return [...allClipData(lane.index)].reverse().find((clip) => {
+                    const x = (clip.offset - view.start) / view.span * rect.width;
+                    const width = clipDuration(clip) / view.span * rect.width;
+                    return pointerX >= x - 10 && pointerX <= x + width + 10;
+                }) || null;
             }
 
             function handleAt(event) {
-                const data = trackAt(event);
-                if (!data || !renderData.duration) return null;
+                const lane = trackAt(event);
+                const data = clipAt(event);
+                if (!data) return null;
                 const rect = canvas.getBoundingClientRect();
-                const track = settings[data.index];
                 const view = viewBounds();
-                const x = (track.offset - view.start) / view.span * rect.width;
+                const x = (data.offset - view.start) / view.span * rect.width;
                 const trackWidth = clipDuration(data) / view.span * rect.width;
                 const pointerX = event.clientX - rect.left;
-                const connectedTracks = renderData.tracks || [];
-                const row = connectedTracks.findIndex((item) => item.index === data.index);
-                const rowHeight = rect.height / connectedTracks.length;
-                const localY = event.clientY - rect.top - row * rowHeight;
+                const rowHeight = rect.height / TRACK_COUNT;
+                const localY = event.clientY - rect.top - lane.index * rowHeight;
                 const fadeHandles = [
-                    { mode: "fade_in", x: x + track.fade_in / view.span * rect.width },
-                    { mode: "fade_out", x: x + trackWidth - track.fade_out / view.span * rect.width },
+                    { mode: "fade_in", x: x + data.fade_in / view.span * rect.width },
+                    { mode: "fade_out", x: x + trackWidth - data.fade_out / view.span * rect.width },
                 ];
                 const closestFade = fadeHandles.sort((a, b) => Math.abs(pointerX - a.x) - Math.abs(pointerX - b.x))[0];
-                if (localY <= 13 && Math.abs(pointerX - closestFade.x) <= 10) return { ...closestFade, data };
+                if (localY <= 13 && Math.abs(pointerX - closestFade.x) <= 10) return { ...closestFade, data, lane };
                 const resizeHandles = [
                     { mode: "resize_left", x },
                     { mode: "resize_right", x: x + trackWidth },
                 ];
                 const closestResize = resizeHandles.sort((a, b) => Math.abs(pointerX - a.x) - Math.abs(pointerX - b.x))[0];
-                return Math.abs(pointerX - closestResize.x) <= 10 ? { ...closestResize, data } : null;
+                return Math.abs(pointerX - closestResize.x) <= 10 ? { ...closestResize, data, lane } : null;
+            }
+
+            function copyClip(index, id) {
+                const visual = findClip(index, id);
+                const state = clipState(index, id);
+                if (!visual) {
+                    clipClipboard = null;
+                    clipboardVisual = null;
+                    status.textContent = "Copy failed: clip state was not found";
+                    status.style.color = "#ff7474";
+                    return;
+                }
+                // Always replace the clipboard with a new immutable snapshot.
+                // Falling back to the rendered clip prevents a failed lookup
+                // from silently reusing a clip copied from another track.
+                clipClipboard = clipStateFromData({ ...visual, ...(state || {}) }, index);
+                clipboardVisual = { ...visual };
+                status.textContent = `Track ${index + 1} clip copied · right-click a timeline position to paste`;
+                status.style.color = "#9eabb8";
+            }
+
+            function removeClip(index, id) {
+                const clips = ensureLaneClips(index);
+                const position = clips.findIndex((clip) => clip.id === id);
+                if (position < 0) return;
+                clips.splice(position, 1);
+                visualClips.delete(id);
+                if (selectedClip?.trackIndex === index && selectedClip.id === id) selectedClip = null;
+                saveSettings();
+                refreshRows();
+            }
+
+            function pasteClip(index, time, source = clipClipboard, visual = clipboardVisual) {
+                if (!source) return;
+                const id = newClipId();
+                const state = {
+                    ...source,
+                    id,
+                    offset: Math.round(Math.max(0, time) * 1000) / 1000,
+                };
+                ensureLaneClips(index).push(state);
+                if (visual) visualClips.set(id, { ...visual, ...state });
+                selectedClip = { trackIndex: index, id };
+                syncRowToSelection(index);
+                saveSettings();
+                refreshRows();
+            }
+
+            function duplicateClip(index, id) {
+                const source = clipState(index, id);
+                const visual = findClip(index, id);
+                if (!source || !visual) return;
+                pasteClip(index, source.offset + clipDuration(visual), source, visual);
+            }
+
+            function closeContextMenu() {
+                if (contextMenuDismiss) {
+                    document.removeEventListener("pointerdown", contextMenuDismiss);
+                    contextMenuDismiss = null;
+                }
+                contextMenu?.remove();
+                contextMenu = null;
+            }
+
+            function showContextMenu(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (rightDragMoved) {
+                    rightDragMoved = false;
+                    return;
+                }
+                closeContextMenu();
+                const lane = trackAt(event);
+                const clicked = clipAt(event);
+                const time = Math.max(0, eventTime(event));
+                if (clicked) {
+                    ensureLaneClips(lane.index);
+                    selectedClip = { trackIndex: lane.index, id: clicked.id };
+                    syncRowToSelection(lane.index);
+                    refreshRows();
+                }
+                const actions = [];
+                if (clicked) {
+                    actions.push(
+                        ["Copy", () => copyClip(lane.index, clicked.id)],
+                        ["Cut", () => { copyClip(lane.index, clicked.id); removeClip(lane.index, clicked.id); }],
+                        ["Duplicate", () => duplicateClip(lane.index, clicked.id)],
+                        ["Delete", () => removeClip(lane.index, clicked.id)],
+                    );
+                }
+                if (clipClipboard) actions.push(["Paste", () => pasteClip(lane.index, time)]);
+                if (!actions.length) return;
+
+                contextMenu = document.createElement("div");
+                contextMenu.style.cssText = "position:fixed;z-index:100000;min-width:130px;padding:4px;background:#20252c;border:1px solid #566170;border-radius:5px;box-shadow:0 6px 18px rgba(0,0,0,.45);font:12px sans-serif";
+                actions.forEach(([label, action]) => {
+                    const item = document.createElement("button");
+                    item.type = "button";
+                    item.textContent = label;
+                    item.style.cssText = "display:block;width:100%;padding:6px 12px;text-align:left;color:#e7edf3;background:transparent;border:0;border-radius:3px;cursor:pointer";
+                    item.addEventListener("mouseenter", () => { item.style.background = "#35404d"; });
+                    item.addEventListener("mouseleave", () => { item.style.background = "transparent"; });
+                    item.addEventListener("click", (clickEvent) => {
+                        clickEvent.stopPropagation();
+                        closeContextMenu();
+                        action();
+                    });
+                    contextMenu.append(item);
+                });
+                document.body.append(contextMenu);
+                const menuRect = contextMenu.getBoundingClientRect();
+                contextMenu.style.left = `${Math.max(4, Math.min(window.innerWidth - menuRect.width - 4, event.clientX))}px`;
+                contextMenu.style.top = `${Math.max(4, Math.min(window.innerHeight - menuRect.height - 4, event.clientY))}px`;
+                // Do not remove the menu on its own pointerdown. Removing the
+                // clicked button before its click event fires prevents every
+                // command, including Copy, from running.
+                const openedMenu = contextMenu;
+                contextMenuDismiss = (pointerEvent) => {
+                    if (openedMenu && !openedMenu.contains(pointerEvent.target)) closeContextMenu();
+                };
+                setTimeout(() => {
+                    if (contextMenuDismiss) document.addEventListener("pointerdown", contextMenuDismiss);
+                }, 0);
             }
 
             canvas.addEventListener("pointerdown", (event) => {
-                const data = trackAt(event);
-                if (!data || !renderData.duration) return;
+                const lane = trackAt(event);
                 if (event.button === 2) {
                     const view = viewBounds();
+                    rightDragMoved = false;
                     drag = { mode: "pan", x: event.clientX, start: view.start, span: view.span };
                     canvas.setPointerCapture(event.pointerId);
                     canvas.style.cursor = "grabbing";
                     return;
                 }
                 if (event.button !== 0) return;
+                const clicked = clipAt(event);
+                if (!clicked) {
+                    selectedClip = null;
+                    draw();
+                    return;
+                }
                 // Keep the time scale fixed while editing. When Show All is
                 // active, changing a clip edge or position changes the full
                 // timeline extent; continuously refitting that extent makes a
@@ -486,16 +783,22 @@ app.registerExtension({
                 viewEnd = editView.end;
                 showFullTimeline = false;
                 const handle = handleAt(event);
+                ensureLaneClips(lane.index);
+                const state = clipState(lane.index, clicked.id);
+                if (!state) return;
+                selectedClip = { trackIndex: lane.index, id: state.id };
+                syncRowToSelection(lane.index);
                 if (handle) {
                     drag = {
                         mode: handle.mode,
-                        index: data.index,
+                        index: lane.index,
+                        clipId: state.id,
                         x: event.clientX,
                         initial: handle.mode.startsWith("resize_")
-                            ? clipDuration(data)
-                            : settings[data.index][handle.mode],
-                        initialOffset: settings[data.index].offset,
-                        initialSourceStart: clipSourceStart(data.index),
+                            ? clipDuration(clicked)
+                            : state[handle.mode],
+                        initialOffset: state.offset,
+                        initialSourceStart: clipSourceStart(state),
                         span: editView.span,
                         currentX: event.clientX,
                         currentY: event.clientY,
@@ -503,9 +806,10 @@ app.registerExtension({
                 } else {
                     drag = {
                         mode: "offset",
-                        index: data.index,
+                        index: lane.index,
+                        clipId: state.id,
                         x: event.clientX,
-                        offset: settings[data.index].offset,
+                        offset: state.offset,
                         span: editView.span,
                     };
                 }
@@ -520,20 +824,24 @@ app.registerExtension({
                 const width = canvas.getBoundingClientRect().width;
                 const view = viewBounds();
                 if (drag.mode === "pan") {
+                    if (Math.abs(event.clientX - drag.x) >= 4) rightDragMoved = true;
                     const extent = timelineExtent();
                     const nextStart = drag.start - (event.clientX - drag.x) / width * drag.span;
                     viewStart = Math.max(extent.start, Math.min(extent.end - drag.span, nextStart));
                     viewEnd = viewStart + drag.span;
                 } else if (drag.mode === "offset") {
-                    settings[drag.index].offset = Math.round((drag.offset + (event.clientX - drag.x) / width * drag.span) * 1000) / 1000;
-                    rowElements[drag.index].offset.value = String(settings[drag.index].offset);
+                    const state = clipState(drag.index, drag.clipId);
+                    state.offset = Math.round((drag.offset + (event.clientX - drag.x) / width * drag.span) * 1000) / 1000;
+                    rowElements[drag.index].offset.value = String(state.offset);
                 } else if (drag.mode === "resize_right") {
+                    const state = clipState(drag.index, drag.clipId);
                     const delta = (event.clientX - drag.x) / width * drag.span;
-                    settings[drag.index].timeline_duration = Math.round(Math.max(0.001, Math.min(86400, drag.initial + delta)) * 1000) / 1000;
-                    clampFades(drag.index, settings[drag.index].timeline_duration);
+                    state.timeline_duration = Math.round(Math.max(0.001, Math.min(86400, drag.initial + delta)) * 1000) / 1000;
+                    clampFades(drag.index, state.timeline_duration);
                     drag.currentX = event.clientX;
                     drag.currentY = event.clientY;
                 } else if (drag.mode === "resize_left") {
+                    const state = clipState(drag.index, drag.clipId);
                     const requested = (event.clientX - drag.x) / width * drag.span;
                     const minimumDelta = Math.max(
                         -(86400 - drag.initial),
@@ -546,11 +854,11 @@ app.registerExtension({
                         86400 - drag.initialSourceStart,
                     );
                     const delta = Math.max(minimumDelta, Math.min(maximumDelta, requested));
-                    settings[drag.index].offset = Math.round((drag.initialOffset + delta) * 1000) / 1000;
-                    settings[drag.index].source_start = Math.round((drag.initialSourceStart + delta) * 1000) / 1000;
-                    settings[drag.index].timeline_duration = Math.round((drag.initial - delta) * 1000) / 1000;
-                    clampFades(drag.index, settings[drag.index].timeline_duration);
-                    rowElements[drag.index].offset.value = String(settings[drag.index].offset);
+                    state.offset = Math.round((drag.initialOffset + delta) * 1000) / 1000;
+                    state.source_start = Math.round((drag.initialSourceStart + delta) * 1000) / 1000;
+                    state.timeline_duration = Math.round((drag.initial - delta) * 1000) / 1000;
+                    clampFades(drag.index, state.timeline_duration);
+                    rowElements[drag.index].offset.value = String(state.offset);
                     drag.currentX = event.clientX;
                     drag.currentY = event.clientY;
                 } else {
@@ -577,12 +885,14 @@ app.registerExtension({
             canvas.addEventListener("dblclick", (event) => {
                 const handle = handleAt(event);
                 if (!handle || !["fade_in", "fade_out"].includes(handle.mode)) return;
-                setFade(handle.data.index, handle.mode, 0);
+                selectedClip = { trackIndex: handle.lane.index, id: handle.data.id };
+                ensureLaneClips(handle.lane.index);
+                setFade(handle.lane.index, handle.mode, 0);
                 saveSettings();
                 event.preventDefault();
                 event.stopPropagation();
             });
-            canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+            canvas.addEventListener("contextmenu", showContextMenu);
             canvas.addEventListener("wheel", (event) => {
                 if (!renderData.duration) return;
                 event.preventDefault();
@@ -632,7 +942,12 @@ app.registerExtension({
             node.setSize([Math.max(node.size[0], 780), Math.max(node.size[1], 760)]);
             schedulePanelFit();
 
-            chainCallback(node, "onConnectionsChange", refreshRows);
+            chainCallback(node, "onConnectionsChange", function (type) {
+                // LiteGraph uses 1 for input connections and 2 for outputs.
+                // Changing an Audio Out connection must not clear the Mixer.
+                if (type === 1) clearConnectionRenderState();
+                else refreshRows();
+            });
             chainCallback(node, "onConfigure", function () {
                 setTimeout(restoreVisibleSettings, 0);
                 schedulePanelFit();
@@ -641,6 +956,14 @@ app.registerExtension({
                 try {
                     const value = message?.alice_lab_audio_tools_mixer?.[0] ?? message?.alice_lab_audio_tools_mixer;
                     renderData = typeof value === "string" ? JSON.parse(value) : value;
+                    // Render results are now authoritative. Discard transient
+                    // visuals and selection from the preceding execution so a
+                    // stale clip is not left highlighted or used for hit tests.
+                    visualClips.clear();
+                    selectedClip = null;
+                    drag = null;
+                    closeContextMenu();
+                    pruneDisconnectedClips();
                     if (showFullTimeline || viewEnd <= viewStart) {
                         const extent = timelineExtent();
                         viewStart = extent.start;
@@ -650,14 +973,19 @@ app.registerExtension({
                         viewStart = view.start;
                         viewEnd = view.end;
                     }
-                    draw();
+                    refreshRows();
                 } catch (error) {
                     status.textContent = `Mixer display error: ${error.message}`;
                 }
             });
             chainCallback(masterWidget, "callback", draw);
             chainCallback(clippingWidget, "callback", draw);
-            new ResizeObserver(draw).observe(canvas);
+            const resizeObserver = new ResizeObserver(draw);
+            resizeObserver.observe(canvas);
+            chainCallback(node, "onRemoved", function () {
+                closeContextMenu();
+                resizeObserver.disconnect();
+            });
             setTimeout(refreshRows, 0);
         });
     },
