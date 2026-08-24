@@ -1,6 +1,6 @@
 [project]
 name = "alice-lab-audio-tools"
-version = "0.1.2"
+version = "0.1.3"
 description = "ComfyUI custom nodes for selecting media ranges, editing and comparing audio, and previewing audio and video."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -18,3 +18,4 @@ Repository = "https://github.com/alice-lab-dev/ComfyUI-ALICE-Lab-Audio-Tools"
 [tool.comfy]
 PublisherId = "alice-lab-dev"
 DisplayName = "ComfyUI ALICE Lab Audio Tools"
+Icon = "https://raw.githubusercontent.com/alice-lab-dev/ComfyUI-ALICE-Lab-Audio-Tools/main/assets/icon.png"
