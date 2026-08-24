@@ -23,7 +23,7 @@ ComfyUI ALICE Lab Audio Tools is a collection of custom nodes for selecting medi
 | Media | `Load Media Range (Upload)` | Load media from your local device, select an A-B range while viewing its waveform, and output the selected range as `AUDIO` and `VIDEO`. |
 | Media | `Load Media Range (Path)` | Open media directly from an absolute path, select an A-B range while viewing its waveform, and output the selected range as `AUDIO` and `VIDEO`. |
 | Media | `Media Range (Input)` | Preview upstream `AUDIO` or `VIDEO`, select an A-B range from its waveform, and pass the selected range downstream. |
-| Audio | `Audio Mixer` | Arrange and mix up to eight audio tracks with non-destructive clip resizing, silent extension, per-clip editing, and waveform previews. |
+| Audio | `Audio Mixer` | Arrange and mix up to eight tracks with waveform previews, clip resizing, and per-clip copy, paste, cut, delete, and duplicate operations across tracks. |
 | Audio | `Compare Audio` | Compare two waveforms, automatically correct their time difference, and output aligned audio, difference audio, similarity, and delay. |
 | Audio | `Audio Spectrogram` | Inspect the frequency content of audio as a dBFS spectrogram and output the graph as an `IMAGE`. |
 | Audio | `Audio to Irodori Ref Config` | Convert `AUDIO` to the `IRODORI_REF_CONFIG` used by comfy-Irodori-TTS reference audio input. |

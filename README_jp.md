@@ -23,7 +23,7 @@ ComfyUI ALICE Lab Audio Toolsは、メディア範囲の選択、音声の編集
 | Media | `Load Media Range (Upload)` | ローカルメディアをアップロードし、波形を見ながらA-B範囲を選んで`AUDIO`と`VIDEO`を出力します。 |
 | Media | `Load Media Range (Path)` | 絶対パスのメディアを開き、A-B範囲を選んで`AUDIO`と`VIDEO`を出力します。 |
 | Media | `Media Range (Input)` | 上流の`AUDIO`または`VIDEO`をプレビューし、選択範囲を下流へ渡します。 |
-| Audio | `Audio Mixer` | 最大8トラックを、非破壊のクリップ長変更、無音延長、クリップ単位の編集、波形表示を使って配置・ミックスします。 |
+| Audio | `Audio Mixer` | 最大8トラック。クリップ長の変更、クリップ単位でのコピー、ペースト、切り取り、削除、複製（トラック間にも対応）。波形表示を使って配置・ミックスします。 |
 | Audio | `Compare Audio` | 2つの音声を自動整列し、差分、類似度、遅延を出力します。 |
 | Audio | `Audio Spectrogram` | dBFSスペクトログラムを表示し、`IMAGE`として出力します。 |
 | Audio | `Audio to Irodori Ref Config` | `AUDIO`をcomfy-Irodori-TTSの参照音声用`IRODORI_REF_CONFIG`へ変換します。 |
