@@ -27,6 +27,7 @@ from .mixer import AliceLabAudioMixer
 from .video_audio_replace import AliceLabReplaceVideoAudio, _write_audio_wave
 from .video_output import AliceLabOutputFFmpeg
 from .audio_spectrogram import AliceLabSpectrogram
+from .irodori_ref_config import AliceLabAudioToIrodoriRefConfig
 
 
 MEDIA_EXTENSIONS = {
@@ -721,6 +722,7 @@ NODE_CLASS_MAPPINGS = {
     "AliceLabReplaceVideoAudio": AliceLabReplaceVideoAudio,
     "AliceLabOutputFFmpeg": AliceLabOutputFFmpeg,
     "AliceLabSpectrogram": AliceLabSpectrogram,
+    "AliceLabAudioToIrodoriRefConfig": AliceLabAudioToIrodoriRefConfig,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AliceLabMediaRange": "Load Media Range (Upload)",
@@ -733,4 +735,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AliceLabReplaceVideoAudio": "Replace Video Audio",
     "AliceLabOutputFFmpeg": "Preview Video",
     "AliceLabSpectrogram": "Audio Spectrogram",
+    "AliceLabAudioToIrodoriRefConfig": "Audio to Irodori Ref Config",
 }

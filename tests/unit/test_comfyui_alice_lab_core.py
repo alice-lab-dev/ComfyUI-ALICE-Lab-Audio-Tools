@@ -53,6 +53,7 @@ def test_node_display_names_are_search_oriented_and_keep_node_identifiers() -> N
         "AliceLabReplaceVideoAudio": "Replace Video Audio",
         "AliceLabOutputFFmpeg": "Preview Video",
         "AliceLabSpectrogram": "Audio Spectrogram",
+        "AliceLabAudioToIrodoriRefConfig": "Audio to Irodori Ref Config",
     }
     assert class_mapping_keys == set(display_mapping) == {
         "AliceLabMediaRange",
@@ -65,6 +66,7 @@ def test_node_display_names_are_search_oriented_and_keep_node_identifiers() -> N
         "AliceLabReplaceVideoAudio",
         "AliceLabOutputFFmpeg",
         "AliceLabSpectrogram",
+        "AliceLabAudioToIrodoriRefConfig",
     }
 
 

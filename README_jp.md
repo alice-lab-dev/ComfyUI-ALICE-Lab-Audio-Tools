@@ -26,6 +26,7 @@ ComfyUI ALICE Lab Audio Toolsは、メディア範囲の選択、音声の編集
 | Audio | `Audio Mixer` | 最大8トラックを波形で確認しながら配置・ミックスします。 |
 | Audio | `Compare Audio` | 2つの音声を自動整列し、差分、類似度、遅延を出力します。 |
 | Audio | `Audio Spectrogram` | dBFSスペクトログラムを表示し、`IMAGE`として出力します。 |
+| Audio | `Audio to Irodori Ref Config` | `AUDIO`をcomfy-Irodori-TTSの参照音声用`IRODORI_REF_CONFIG`へ変換します。 |
 | Audio | `Output Waveform` | `AUDIO`を再生し、波形と基本情報を確認します。 |
 | Utils | `Output Float` | 接続した`FLOAT`を指定精度で表示してそのまま渡します。 |
 | Video | `Replace Video Audio` | 動画映像を保ったまま音声を置換します。 |
@@ -123,6 +124,16 @@ AUDIO ──> Audio Spectrogram ──> IMAGE
   </a>
 </p>
 
+### 選択範囲をIrodori-TTSの参照音声にする
+
+```text
+Media Range (Input).audio
+  ──> Audio to Irodori Ref Config.audio
+  ──> IrodoriTTS Sampler.ref_config
+```
+
+受け側のSamplerには[comfy-Irodori-TTS](https://github.com/jupo-ai/comfy-Irodori-TTS)が必要です。未インストールでもALICE Lab Audio Tools自体の読み込みには影響しません。
+
 ## ノードリファレンス
 
 ### Load Media Range (Upload)
@@ -136,6 +147,12 @@ AUDIO ──> Audio Spectrogram ──> IMAGE
 ### Load Media Range (Path) / Media Range (Input)
 
 Path版は絶対パスの対応ファイルをコピーせずに開きます。信頼できるComfyUIサーバーだけで使い、信頼できない利用者に無制限のサーバー側パスを公開しないでください。Input版は上流の`AUDIO`または`VIDEO`を1つだけ受け、音声入力のサンプルレート・チャンネルを保持します。初期値`end_seconds = 0`は入力全体を選択します。
+
+### Audio to Irodori Ref Config
+
+ComfyUI標準`AUDIO`と、IrodoriTTS Reference Audioと同じ`normalize_ref_audio`、`max_ref_seconds`を受けます。出力`IRODORI_REF_CONFIG`はIrodoriTTS Samplerへ直接接続できます。
+
+先頭の音声バッチをmono化し、元のサンプルレートを保ったPCM16 WAVとして`ComfyUI/temp/alice_lab_audio_tools/irodori_ref/`へ保存します。ファイル名は音声内容のハッシュなので、同じ音声の再実行では同じファイルを再利用します。このノードからIrodori-TTSをimportしません。
 
 ### Audio Mixer
 
@@ -191,6 +208,7 @@ mp3  mp4   mpg  mpeg  ogg   opus ts   wav  webm  wma
 
 - メディア対応は拡張子とインストール済みFFmpegコーデックに依存します。
 - ファイルベースのMedia Range出力は常に44.1 kHzステレオです。Media Range (Input)の直接`AUDIO`入力は元形式を保持します。
+- Audio to Irodori Ref Configは先頭の音声バッチを使用し、その全チャンネルを平均してmono化します。
 - Compare Audioは最初の音声バッチと最大2チャンネルのみを使用します。
 - 自動位置合わせには振幅エンベロープの相関を使用します。そのため、無音、関連性のない音源、繰り返しの多い音声、または検索範囲を超える遅延では、意図しないオフセットが選択される場合があります。
 - Audio Mixerの入力は最大8つです。

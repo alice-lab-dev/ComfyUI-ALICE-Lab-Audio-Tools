@@ -26,6 +26,7 @@ ComfyUI ALICE Lab Audio Tools is a collection of custom nodes for selecting medi
 | Audio | `Audio Mixer` | Arrange and mix up to eight audio tracks while viewing their waveforms, with gain, position, mute, solo, and fade controls. |
 | Audio | `Compare Audio` | Compare two waveforms, automatically correct their time difference, and output aligned audio, difference audio, similarity, and delay. |
 | Audio | `Audio Spectrogram` | Inspect the frequency content of audio as a dBFS spectrogram and output the graph as an `IMAGE`. |
+| Audio | `Audio to Irodori Ref Config` | Convert `AUDIO` to the `IRODORI_REF_CONFIG` used by comfy-Irodori-TTS reference audio input. |
 | Audio | `Output Waveform` | Play `AUDIO`, inspect its waveform and basic audio information, and pass it downstream unchanged. |
 | Utils | `Output Float` | Display a connected `FLOAT` result with a label and selected precision, then pass it downstream unchanged. |
 | Video | `Replace Video Audio` | Keep the video image and replace its soundtrack with processed `AUDIO`. |
@@ -125,6 +126,16 @@ AUDIO ──> Audio Spectrogram ──> IMAGE
   </a>
 </p>
 
+### Use a selected range as Irodori-TTS reference audio
+
+```text
+Media Range (Input).audio
+  ──> Audio to Irodori Ref Config.audio
+  ──> IrodoriTTS Sampler.ref_config
+```
+
+This integration requires [comfy-Irodori-TTS](https://github.com/jupo-ai/comfy-Irodori-TTS) for the receiving sampler. ALICE Lab Audio Tools still loads normally when it is not installed.
+
 ## Node Reference
 
 ### Load Media Range (Upload)
@@ -192,6 +203,12 @@ For an audio-only input, the `video` output is unavailable. For a video without 
 - Read adaptive time ticks along the horizontal axis; their interval changes with zoom.
 
 When zoomed, the node requests a more detailed signed min/max waveform for the visible range.
+
+### Audio to Irodori Ref Config
+
+Accepts standard ComfyUI `AUDIO` plus the same `normalize_ref_audio` and `max_ref_seconds` options as IrodoriTTS Reference Audio. It outputs `IRODORI_REF_CONFIG` for direct connection to IrodoriTTS Sampler.
+
+The first audio batch is averaged to mono and written at its original sample rate as PCM16 WAV under `ComfyUI/temp/alice_lab_audio_tools/irodori_ref/`. The filename is a content hash, so rerunning identical audio reuses the same file. Irodori-TTS is not imported by this node.
 
 ### Audio Mixer
 
@@ -388,6 +405,7 @@ Run `Compare Audio` again. Interactive analysis sessions are intentionally bound
 
 - Media support is filtered by extension and then limited by the installed FFmpeg codecs.
 - File-based Media Range output audio is always 44.1 kHz stereo. Direct `AUDIO` input to Media Range (Input) preserves its original format.
+- Audio to Irodori Ref Config uses the first audio batch and averages all of its channels to mono.
 - Compare Audio uses only the first audio batch and at most two channels.
 - Automatic alignment uses amplitude-envelope correlation and may select an unintended offset for silence, unrelated sources, repetitive content, or delays outside the search range.
 - Audio Mixer supports at most eight inputs.
