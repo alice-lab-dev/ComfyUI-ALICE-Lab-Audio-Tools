@@ -722,42 +722,70 @@ app.registerExtension({
                     timeout = setTimeout(finish, 1000);
                 });
             }
+            function showRangePlayButton() {
+                playButton.textContent = "▶";
+                playButton.title = "Play A–B";
+                playButton.setAttribute("aria-label", "Play A–B");
+            }
+            function showRangeStopButton() {
+                playButton.textContent = "■";
+                playButton.title = "Stop A–B playback";
+                playButton.setAttribute("aria-label", "Stop A–B playback");
+            }
+            function stopRangePlayback(media, seekToEnd = false) {
+                rangePlayback = false;
+                media.pause();
+                if (seekToEnd) {
+                    media.currentTime = Math.min(endWidget.value, media.duration || endWidget.value);
+                }
+                showRangePlayButton();
+            }
+            function handleRangeEnd(media) {
+                if (!rangePlayback) return;
+                if (loopPlayback) {
+                    // Clear the ended/B state before requesting playback again.
+                    // Assigning currentTime first is important for sparse-GOP
+                    // Upload previews whose backward seek can be asynchronous.
+                    rangePlayback = false;
+                    media.currentTime = startWidget.value;
+                    rangePlayback = true;
+                    const playback = media.play();
+                    playback?.catch((error) => {
+                        stopRangePlayback(media);
+                        label.textContent = `ALICE Lab: playback failed (${error.message})`;
+                    });
+                } else {
+                    stopRangePlayback(media, true);
+                }
+            }
             startMinus.addEventListener("click", () => nudge("start", -0.01));
             startPlus.addEventListener("click", () => nudge("start", 0.01));
             endMinus.addEventListener("click", () => nudge("end", -0.01));
             endPlus.addEventListener("click", () => nudge("end", 0.01));
             playButton.addEventListener("click", async () => {
                 if (rangePlayback) {
-                    rangePlayback = false; activeMedia.pause();
-                    playButton.textContent = "▶";
-                    playButton.title = "Play A–B";
-                    playButton.setAttribute("aria-label", "Play A–B");
+                    stopRangePlayback(activeMedia);
                 } else {
                     try {
                         if (!activeMedia.currentSrc && !activeMedia.src) {
                             throw new Error("preview is not loaded");
                         }
-                        // Keep A-B boundary handling off while rewinding from B.
-                        // Otherwise the old B timeupdate can stop the second
-                        // playback before the asynchronous seek reaches A.
+                        // Stop at B before rewinding. Starting play while still
+                        // at B can leave sparse-GOP MP4 previews paused/ended
+                        // when the asynchronous backward seek reaches A.
                         rangePlayback = false;
+                        activeMedia.pause();
                         const start = startWidget.value;
                         const seekReady = waitForSeek(activeMedia, start);
-                        // Call play synchronously from the click gesture so the
-                        // browser requests media data before the A seek and its
-                        // autoplay policy continues to permit audio.
-                        const playbackReady = activeMedia.play();
                         activeMedia.currentTime = start;
-                        await Promise.all([seekReady, playbackReady]);
+                        // Call play synchronously from the click gesture, but
+                        // only after currentTime no longer points at B/ended.
                         rangePlayback = true;
-                        playButton.textContent = "■";
-                        playButton.title = "Stop A–B playback";
-                        playButton.setAttribute("aria-label", "Stop A–B playback");
+                        showRangeStopButton();
+                        const playbackReady = activeMedia.play();
+                        await Promise.all([seekReady, playbackReady]);
                     } catch (error) {
-                        rangePlayback = false;
-                        playButton.textContent = "▶";
-                        playButton.title = "Play A–B";
-                        playButton.setAttribute("aria-label", "Play A–B");
+                        stopRangePlayback(activeMedia);
                         label.textContent = `ALICE Lab: playback failed (${error.message})`;
                     }
                 }
@@ -857,19 +885,14 @@ app.registerExtension({
                     // Native media playback has no A-B boundary, so enforce it
                     // only while the dedicated A-B playback mode is active.
                     if (media === activeMedia && rangePlayback && media.currentTime >= endWidget.value) {
-                        if (loopPlayback) {
-                            media.currentTime = startWidget.value;
-                            media.play();
-                        } else {
-                            rangePlayback = false;
-                            media.pause();
-                            media.currentTime = endWidget.value;
-                            playButton.textContent = "▶";
-                            playButton.title = "Play A–B";
-                            playButton.setAttribute("aria-label", "Play A–B");
-                        }
+                        handleRangeEnd(media);
                     }
                     if (media === activeMedia) draw();
+                });
+                media.addEventListener("ended", () => {
+                    // Some browser/media combinations can reach ended without
+                    // delivering a final timeupdate at the exact B timestamp.
+                    if (media === activeMedia) handleRangeEnd(media);
                 });
                 media.addEventListener("seeked", () => {
                     if (media === activeMedia) draw();

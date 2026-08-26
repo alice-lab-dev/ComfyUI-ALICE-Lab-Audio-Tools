@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,3 +39,31 @@ def test_resolve_media_tool_reports_missing_executable(monkeypatch, tmp_path) ->
 
     with pytest.raises(RuntimeError, match="ffmpeg was not found"):
         media_tools.resolve_media_tool("ffmpeg")
+
+
+@pytest.mark.parametrize(
+    ("keyframes", "duration", "expected"),
+    [
+        ([0.0, 2.0, 4.0], 6.0, False),
+        ([6.0, 5.0, 0.0], 10.0, True),
+        ([], 10.0, True),
+    ],
+)
+def test_seekable_preview_is_only_needed_for_sparse_keyframes(
+    monkeypatch, tmp_path, keyframes, duration, expected
+) -> None:
+    payload = {
+        "frames": [
+            {"best_effort_timestamp_time": str(timestamp)}
+            for timestamp in keyframes
+        ],
+        "format": {"duration": str(duration)},
+    }
+    monkeypatch.setattr(media_tools, "resolve_media_tool", lambda _name: "/bin/ffprobe")
+    monkeypatch.setattr(
+        media_tools.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout=json.dumps(payload)),
+    )
+
+    assert media_tools.needs_seekable_video_preview(tmp_path / "video.mp4") is expected

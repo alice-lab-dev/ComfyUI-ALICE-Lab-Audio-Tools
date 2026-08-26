@@ -21,7 +21,7 @@ from .audio_compare import (
 )
 from .audio_output import AliceLabOutputWaveform
 from .float_output import AliceLabOutputFloat
-from .media_tools import resolve_media_tool
+from .media_tools import needs_seekable_video_preview, resolve_media_tool
 from .media_range_input import normalize_range, trim_audio
 from .mixer import AliceLabAudioMixer
 from .video_audio_replace import AliceLabReplaceVideoAudio, _write_audio_wave
@@ -519,6 +519,7 @@ class AliceLabMediaRangeInput:
 
 web = server.web
 _preview_locks: dict[str, asyncio.Lock] = {}
+_preview_modes: dict[str, bool] = {}
 
 
 @server.PromptServer.instance.routes.get("/alice_lab_audio_tools/config")
@@ -678,8 +679,17 @@ async def preview(request):
     except Exception as error:
         return web.Response(text=str(error), status=400)
     stat = path.stat()
+    source_version = f"{path}:{stat.st_mtime_ns}:{stat.st_size}"
+    if source_version not in _preview_modes:
+        if len(_preview_modes) >= 128:
+            _preview_modes.pop(next(iter(_preview_modes)))
+        _preview_modes[source_version] = await asyncio.to_thread(
+            needs_seekable_video_preview, path
+        )
+    transcode_video = _preview_modes[source_version]
+    preview_mode = "seekable" if transcode_video else "remux"
     cache_key = hashlib.sha256(
-        f"{path}:{stat.st_mtime_ns}:{stat.st_size}".encode()
+        f"adaptive-preview-v3:{preview_mode}:{source_version}".encode()
     ).hexdigest()[:20]
     proxy = Path(folder_paths.get_temp_directory()) / f"alice_lab_audio_tools_{cache_key}.mp4"
     # Multiple nodes can request one preview concurrently. A per-source lock
@@ -690,10 +700,20 @@ async def preview(request):
             # Replace atomically so the browser never observes a partial MP4.
             partial = proxy.with_suffix(".part.mp4")
             partial.unlink(missing_ok=True)
+            video_args = (
+                [
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                    "-vf",
+                    "scale=854:480:force_original_aspect_ratio=decrease:force_divisible_by=2",
+                    "-pix_fmt", "yuv420p", "-force_key_frames", "expr:gte(t,n_forced*1)",
+                ]
+                if transcode_video
+                else ["-c:v", "copy"]
+            )
             process = await asyncio.create_subprocess_exec(
                 resolve_media_tool("ffmpeg"), "-hide_banner", "-loglevel", "error",
                 "-nostdin", "-i", str(path), "-map", "0:v:0", "-map",
-                "0:a:0?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "0:a:0?", *video_args, "-c:a", "aac", "-b:a", "192k",
                 "-movflags", "+faststart", "-y", str(partial),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
