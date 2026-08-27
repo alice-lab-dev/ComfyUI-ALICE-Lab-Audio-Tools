@@ -31,6 +31,7 @@ ComfyUI ALICE Lab Audio Tools is a collection of custom nodes for selecting medi
 | Utils | `Output Float` | Display a connected `FLOAT` result with a label and selected precision, then pass it downstream unchanged. |
 | Video | `Replace Video Audio` | Keep the video image and replace its soundtrack with processed `AUDIO`. |
 | Video | `Preview Video` | Preview `VIDEO` in the node, download it with a selected filename, and pass it downstream unchanged. |
+| Video | `Video First / Last Frame` | Extract the first and last frames of a `VIDEO` as `IMAGE` outputs. |
 
 Nodes appear under these Add Node categories:
 
@@ -355,6 +356,10 @@ Displays a connected `VIDEO` directly in the node for playback and confirmation.
 </p>
 
 The Save button downloads the temporary preview through the browser. It does not write directly to an arbitrary server-side output directory.
+
+### Video First / Last Frame
+
+Extracts the first and last frames of a `VIDEO` as ComfyUI `IMAGE` outputs. It can obtain the start and end images from a video segment produced by Media Range.
 
 ## Supported Media Extensions
 

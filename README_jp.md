@@ -31,6 +31,7 @@ ComfyUI ALICE Lab Audio Toolsは、メディア範囲の選択、音声の編集
 | Utils | `Output Float` | 接続した`FLOAT`を指定精度で表示してそのまま渡します。 |
 | Video | `Replace Video Audio` | 動画映像を保ったまま音声を置換します。 |
 | Video | `Preview Video` | `VIDEO`をノード内で再生・ダウンロードします。 |
+| Video | `Video First / Last Frame` | `VIDEO`の最初と最後のフレームを`IMAGE`として出力します。 |
 
 ノードはAdd Nodeメニューの次のカテゴリに表示されます。
 
@@ -193,6 +194,10 @@ Replace Video Audioは動画映像を保持して接続済み音声へ置き換�
 </p>
 
 <p align="center"><a href="docs/images/preview-video.png"><img src="docs/images/preview-video.png" alt="Preview Video node" width="500"></a></p>
+
+### Video First / Last Frame
+
+`VIDEO`の最初と最後のフレームをComfyUIの`IMAGE`として出力します。Media Rangeで切り出した動画区間の開始画像・終了画像取得にも利用できます。
 
 ## 対応メディア拡張子
 

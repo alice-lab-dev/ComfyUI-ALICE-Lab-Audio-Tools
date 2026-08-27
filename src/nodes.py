@@ -28,6 +28,7 @@ from .video_audio_replace import AliceLabReplaceVideoAudio, _write_audio_wave
 from .video_output import AliceLabOutputFFmpeg
 from .audio_spectrogram import AliceLabSpectrogram
 from .irodori_ref_config import AliceLabAudioToIrodoriRefConfig
+from .video_frames import AliceLabVideoFirstLastFrame
 
 
 MEDIA_EXTENSIONS = {
@@ -743,6 +744,7 @@ NODE_CLASS_MAPPINGS = {
     "AliceLabOutputFFmpeg": AliceLabOutputFFmpeg,
     "AliceLabSpectrogram": AliceLabSpectrogram,
     "AliceLabAudioToIrodoriRefConfig": AliceLabAudioToIrodoriRefConfig,
+    "AliceLabVideoFirstLastFrame": AliceLabVideoFirstLastFrame,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AliceLabMediaRange": "Load Media Range (Upload)",
@@ -756,4 +758,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AliceLabOutputFFmpeg": "Preview Video",
     "AliceLabSpectrogram": "Audio Spectrogram",
     "AliceLabAudioToIrodoriRefConfig": "Audio to Irodori Ref Config",
+    "AliceLabVideoFirstLastFrame": "Video First / Last Frame",
 }
