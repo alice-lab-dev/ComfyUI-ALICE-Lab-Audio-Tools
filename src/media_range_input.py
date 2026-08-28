@@ -3,6 +3,36 @@ from __future__ import annotations
 import torch
 
 
+def validate_static_range(start_seconds, end_seconds) -> bool | str:
+    """Validate literal range values while allowing linked values to resolve later."""
+    if start_seconds is None or end_seconds is None:
+        return True
+    if start_seconds < 0 or end_seconds <= start_seconds:
+        return "End time must be later than start time"
+    return True
+
+
+def range_ui_payload(source: str, start_seconds: float, end_seconds: float) -> dict:
+    """Describe the executed range so linked values can update the browser UI."""
+    return {
+        "source": str(source),
+        "start": float(start_seconds),
+        "end": float(end_seconds),
+    }
+
+
+def trim_video_to_logical_duration(video, duration: float):
+    """Keep packet-boundary mux drift out of a returned ComfyUI VIDEO range."""
+    trimmed = video.as_trimmed(
+        start_time=0.0,
+        duration=float(duration),
+        strict_duration=False,
+    )
+    if trimmed is None:
+        raise ValueError("Replaced video range could not be created")
+    return trimmed
+
+
 def audio_duration(audio: dict) -> float:
     """Return the duration of a non-empty ComfyUI AUDIO value."""
     waveform = audio.get("waveform")

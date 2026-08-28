@@ -22,12 +22,18 @@ from .audio_compare import (
 from .audio_output import AliceLabOutputWaveform
 from .float_output import AliceLabOutputFloat
 from .media_tools import needs_seekable_video_preview, resolve_media_tool
-from .media_range_input import normalize_range, trim_audio
+from .media_range_input import (
+    normalize_range,
+    range_ui_payload,
+    trim_audio,
+    validate_static_range,
+)
 from .mixer import AliceLabAudioMixer
 from .video_audio_replace import AliceLabReplaceVideoAudio, _write_audio_wave
 from .video_output import AliceLabOutputFFmpeg
 from .audio_spectrogram import AliceLabSpectrogram
 from .irodori_ref_config import AliceLabAudioToIrodoriRefConfig
+from .transcript_range import AliceLabTranscriptRangeSelector
 from .video_frames import AliceLabVideoFirstLastFrame
 
 
@@ -310,7 +316,15 @@ class AliceLabMediaRange:
             )
             if video is None:
                 raise ValueError("The selected video range could not be created")
-        return audio, start, end, end - start, video
+        result = (audio, start, end, end - start, video)
+        return {
+            "ui": {
+                "alice_lab_media_range": [
+                    json.dumps(range_ui_payload(media, start, end))
+                ]
+            },
+            "result": result,
+        }
 
     @classmethod
     def IS_CHANGED(cls, media: str, start_seconds: float, end_seconds: float):
@@ -327,9 +341,7 @@ class AliceLabMediaRange:
             _resolve_input(media)
         except ValueError as error:
             return str(error)
-        if start_seconds < 0 or end_seconds <= start_seconds:
-            return "End time must be later than start time"
-        return True
+        return validate_static_range(start_seconds, end_seconds)
 
 
 class AliceLabMediaRangePath(AliceLabMediaRange):
@@ -367,7 +379,17 @@ class AliceLabMediaRangePath(AliceLabMediaRange):
     DESCRIPTION = "Select a range from media at an absolute path without copying it."
 
     def extract(self, media_path: str, start_seconds: float, end_seconds: float):
-        return self._extract_path(_resolve_external(media_path), start_seconds, end_seconds)
+        result = self._extract_path(
+            _resolve_external(media_path), start_seconds, end_seconds
+        )
+        return {
+            "ui": {
+                "alice_lab_media_range": [
+                    json.dumps(range_ui_payload(media_path, result[1], result[2]))
+                ]
+            },
+            "result": result,
+        }
 
     @staticmethod
     def _extract_path(path: Path, start_seconds: float, end_seconds: float):
@@ -400,9 +422,7 @@ class AliceLabMediaRangePath(AliceLabMediaRange):
             _resolve_external(media_path)
         except ValueError as error:
             return str(error)
-        if start_seconds < 0 or end_seconds <= start_seconds:
-            return "End time must be later than start time"
-        return True
+        return validate_static_range(start_seconds, end_seconds)
 
 
 class AliceLabMediaRangeInput:
@@ -744,6 +764,7 @@ NODE_CLASS_MAPPINGS = {
     "AliceLabOutputFFmpeg": AliceLabOutputFFmpeg,
     "AliceLabSpectrogram": AliceLabSpectrogram,
     "AliceLabAudioToIrodoriRefConfig": AliceLabAudioToIrodoriRefConfig,
+    "AliceLabTranscriptRangeSelector": AliceLabTranscriptRangeSelector,
     "AliceLabVideoFirstLastFrame": AliceLabVideoFirstLastFrame,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -758,5 +779,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AliceLabOutputFFmpeg": "Preview Video",
     "AliceLabSpectrogram": "Audio Spectrogram",
     "AliceLabAudioToIrodoriRefConfig": "Audio to Irodori Ref Config",
+    "AliceLabTranscriptRangeSelector": "Transcript Range Selector",
     "AliceLabVideoFirstLastFrame": "Video First / Last Frame",
 }

@@ -12,6 +12,7 @@ from comfy_api.latest import InputImpl
 from comfy_execution.graph_utils import ExecutionBlocker
 
 from .media_tools import resolve_media_tool
+from .media_range_input import trim_video_to_logical_duration
 
 
 def _write_audio_wave(path: Path, audio: dict) -> None:
@@ -114,7 +115,14 @@ class AliceLabReplaceVideoAudio:
             if result.returncode != 0 or not output_path.is_file() or output_path.stat().st_size == 0:
                 detail = result.stderr.strip()
                 raise RuntimeError(detail or "Video audio replacement failed")
-            return (InputImpl.VideoFromFile(str(output_path)),)
+            # Stream-copy muxing can only stop video on a packet/frame boundary,
+            # so the physical MP4 may be a fraction of a frame longer than the
+            # requested VIDEO range. Preserve the logical duration on the
+            # returned VIDEO so downstream nodes do not inherit that mux drift.
+            replaced_video = trim_video_to_logical_duration(
+                InputImpl.VideoFromFile(str(output_path)), duration
+            )
+            return (replaced_video,)
         finally:
             audio_path.unlink(missing_ok=True)
             if materialized_source:

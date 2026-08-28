@@ -20,6 +20,82 @@ def _validate_frames(frames) -> torch.Tensor:
     return frames
 
 
+def _find_last_frame_offset(video, duration: float, frame_rate: float) -> float:
+    """Return the last frame timestamp relative to the active VIDEO range.
+
+    ComfyUI's ``get_duration()`` can reflect the container/audio duration, which
+    may extend past the final video frame. Inspect timestamps through the
+    streaming source so only transient decoder frames are used; IMAGE creation
+    remains delegated to ComfyUI below.
+    """
+    try:
+        import av
+
+        source = video.get_stream_source()
+        active_start, _ = video.get_active_trim_window()
+    except (ImportError, AttributeError, TypeError, ValueError) as error:
+        raise ValueError("Input is not a stream-backed ComfyUI VIDEO.") from error
+
+    active_start = float(active_start)
+    requested_end = active_start + duration
+
+    try:
+        with av.open(source, mode="r") as container:
+            if not container.streams.video:
+                raise ValueError("Video contains no frames.")
+            stream = container.streams.video[0]
+            time_base = float(stream.time_base)
+            if time_base <= 0:
+                raise ValueError("Video contains no frames.")
+
+            # Prefer the video track endpoint over the container endpoint. An
+            # audio track can legitimately continue after the last image.
+            stream_duration = getattr(stream, "duration", None)
+            if stream_duration is not None:
+                stream_start = getattr(stream, "start_time", None) or 0
+                stream_end = float((stream_start + stream_duration) * stream.time_base)
+                requested_end = min(requested_end, stream_end)
+
+            if requested_end <= active_start:
+                raise ValueError("Video contains no frames.")
+
+            end_pts = int(requested_end / time_base)
+            available_duration = requested_end - active_start
+            # A normal seek lands on the preceding keyframe. Exponential
+            # lookback is only needed for sparse timestamps or incomplete
+            # stream metadata, and still retains only one integer timestamp.
+            lookback = min(available_duration, max(2.0, 48.0 / frame_rate))
+            last_pts = None
+            while True:
+                seek_time = max(active_start, requested_end - lookback)
+                container.seek(
+                    int(seek_time / time_base),
+                    stream=stream,
+                    backward=True,
+                    any_frame=False,
+                )
+                for frame in container.decode(stream):
+                    if frame.pts is None:
+                        continue
+                    if frame.pts >= end_pts:
+                        break
+                    frame_time = float(frame.pts * stream.time_base)
+                    if frame_time >= active_start:
+                        last_pts = frame.pts
+
+                if last_pts is not None or lookback >= available_duration:
+                    break
+                lookback = min(available_duration, lookback * 4.0)
+
+            if last_pts is None:
+                raise ValueError("Video contains no frames.")
+            return max(0.0, float(last_pts * stream.time_base) - active_start)
+    except ValueError:
+        raise
+    except Exception as error:
+        raise ValueError("Could not locate the final VIDEO frame.") from error
+
+
 class AliceLabVideoFirstLastFrame:
     """Extract the boundary frames from a ComfyUI VIDEO."""
 
@@ -55,8 +131,9 @@ class AliceLabVideoFirstLastFrame:
         first_video = video.as_trimmed(
             start_time=0.0, duration=window, strict_duration=False
         )
+        last_frame_offset = _find_last_frame_offset(video, duration, frame_rate)
         last_video = video.as_trimmed(
-            start_time=max(0.0, duration - window),
+            start_time=last_frame_offset,
             duration=window,
             strict_duration=False,
         )

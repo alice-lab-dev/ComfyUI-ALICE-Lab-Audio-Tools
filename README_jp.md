@@ -23,6 +23,7 @@ ComfyUI ALICE Lab Audio Toolsは、メディア範囲の選択、音声の編集
 | Media | `Load Media Range (Upload)` | ローカルメディアをアップロードし、波形を見ながらA-B範囲を選んで`AUDIO`と`VIDEO`を出力します。 |
 | Media | `Load Media Range (Path)` | 絶対パスのメディアを開き、A-B範囲を選んで`AUDIO`と`VIDEO`を出力します。 |
 | Media | `Media Range (Input)` | 上流の`AUDIO`または`VIDEO`をプレビューし、選択範囲を下流へ渡します。 |
+| Media | `Transcript Range Selector` | タイムスタンプ付き文字起こしから開始・終了セリフを選び、その時間範囲を出力します。 |
 | Audio | `Audio Mixer` | 最大8トラック。クリップ長の変更、クリップ単位でのコピー、ペースト、切り取り、削除、複製（トラック間にも対応）。波形表示を使って配置・ミックスします。 |
 | Audio | `Compare Audio` | 2つの音声を自動整列し、差分、類似度、遅延を出力します。 |
 | Audio | `Audio Spectrogram` | dBFSスペクトログラムを表示し、`IMAGE`として出力します。 |
@@ -136,6 +137,16 @@ Media Range (Input).audio
 受け側のSamplerには[comfy-Irodori-TTS](https://github.com/jupo-ai/comfy-Irodori-TTS)が必要です。未インストールでもALICE Lab Audio Tools自体の読み込みには影響しません。
 
 ## ノードリファレンス
+
+### Transcript Range Selector
+
+タイムスタンプ付き文字起こしから開始セリフと終了セリフを選択し、対応する`start_seconds`と`end_seconds`を出力します。
+
+入力は`STRING`で、JSONのセグメント列／オブジェクト、またはタイムスタンプ付きSRT/WebVTT本文を受け付けます。内部では各項目を`text`、`start`、`end`へ正規化します。
+
+文字起こし結果は実行時に得られることが多いため、上流STTを一度実行してStart / End候補を読み込み、範囲を選択してからSelector以降を再実行するHuman-in-the-loop方式です。
+
+2つの`FLOAT`出力はMedia Rangeの`start_seconds`と`end_seconds`へ接続できます。[AIFSH/ComfyUI-WhisperX](https://github.com/AIFSH/ComfyUI-WhisperX)では、同梱の`SRTToString`を介してSRTを`STRING`へ変換してから接続します。
 
 ### Load Media Range (Upload)
 

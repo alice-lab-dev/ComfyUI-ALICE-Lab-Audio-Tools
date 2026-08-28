@@ -108,6 +108,7 @@ app.registerExtension({
             let inputPayload = null;
             let sourceDisplayName = "";
             let inputHasLoaded = false;
+            let executedRange = null;
             const canvas = document.createElement("canvas");
             canvas.height = 180;
             canvas.style.cssText = "width:100%;height:180px;min-height:120px;flex:none;background:#101419;border:1px solid #39424e;cursor:pointer;touch-action:none;box-sizing:border-box";
@@ -457,13 +458,21 @@ app.registerExtension({
                     // carrying timestamps from the previously selected file.
                     selectedMarker = null;
                     activeMarker = null;
+                    const matchingExecutedRange = !isInputNode
+                        && executedRange?.source === filename
+                        ? executedRange
+                        : null;
                     updateWidget(
                         startWidget,
-                        isInputNode && !resetInputSelection ? Number(info.start) : 0
+                        matchingExecutedRange
+                            ? matchingExecutedRange.start
+                            : isInputNode && !resetInputSelection ? Number(info.start) : 0
                     );
                     updateWidget(
                         endWidget,
-                        isInputNode && !resetInputSelection ? Number(info.end) : duration
+                        matchingExecutedRange
+                            ? matchingExecutedRange.end
+                            : isInputNode && !resetInputSelection ? Number(info.end) : duration
                     );
                     sourceHasVideo = Boolean(info.has_video);
                     sourceHasAudio = info.has_audio !== false;
@@ -901,6 +910,35 @@ app.registerExtension({
             if (mediaWidget) chainCallback(mediaWidget, "callback", loadMedia);
             chainCallback(startWidget, "callback", draw);
             chainCallback(endWidget, "callback", draw);
+            if (!isInputNode) {
+                chainCallback(node, "onExecuted", function (message) {
+                    try {
+                        const raw = message?.alice_lab_media_range?.[0]
+                            ?? message?.alice_lab_media_range;
+                        if (raw === undefined) return;
+                        const payload = typeof raw === "string" ? JSON.parse(raw) : raw;
+                        const start = Number(payload?.start);
+                        const end = Number(payload?.end);
+                        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+                            throw new Error("Executed media range is invalid");
+                        }
+                        executedRange = {
+                            source: String(payload?.source ?? ""),
+                            start,
+                            end,
+                        };
+                        if (executedRange.source !== String(mediaWidget?.value ?? "")) return;
+                        updateWidget(startWidget, start);
+                        updateWidget(endWidget, end);
+                        selectedMarker = null;
+                        activeMarker = null;
+                        if (duration > 0) seekPreview(Math.min(start, duration));
+                        draw();
+                    } catch (error) {
+                        label.textContent = `ALICE Lab: ${error.message}`;
+                    }
+                });
+            }
             if (isInputNode) {
                 chainCallback(node, "onExecuted", function (message) {
                     try {

@@ -56,6 +56,7 @@ def test_node_display_names_are_search_oriented_and_keep_node_identifiers() -> N
         "AliceLabOutputFFmpeg": "Preview Video",
         "AliceLabSpectrogram": "Audio Spectrogram",
         "AliceLabAudioToIrodoriRefConfig": "Audio to Irodori Ref Config",
+        "AliceLabTranscriptRangeSelector": "Transcript Range Selector",
         "AliceLabVideoFirstLastFrame": "Video First / Last Frame",
     }
     assert class_mapping_keys == set(display_mapping) == {
@@ -70,6 +71,7 @@ def test_node_display_names_are_search_oriented_and_keep_node_identifiers() -> N
         "AliceLabOutputFFmpeg",
         "AliceLabSpectrogram",
         "AliceLabAudioToIrodoriRefConfig",
+        "AliceLabTranscriptRangeSelector",
         "AliceLabVideoFirstLastFrame",
     }
 

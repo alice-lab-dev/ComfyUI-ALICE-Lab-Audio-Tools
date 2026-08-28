@@ -23,6 +23,7 @@ ComfyUI ALICE Lab Audio Tools is a collection of custom nodes for selecting medi
 | Media | `Load Media Range (Upload)` | Load media from your local device, select an A-B range while viewing its waveform, and output the selected range as `AUDIO` and `VIDEO`. |
 | Media | `Load Media Range (Path)` | Open media directly from an absolute path, select an A-B range while viewing its waveform, and output the selected range as `AUDIO` and `VIDEO`. |
 | Media | `Media Range (Input)` | Preview upstream `AUDIO` or `VIDEO`, select an A-B range from its waveform, and pass the selected range downstream. |
+| Media | `Transcript Range Selector` | Select start and end dialogue segments from timestamped transcript data and output their time range. |
 | Audio | `Audio Mixer` | Arrange and mix up to eight tracks with waveform previews, clip resizing, and per-clip copy, paste, cut, delete, and duplicate operations across tracks. |
 | Audio | `Compare Audio` | Compare two waveforms, automatically correct their time difference, and output aligned audio, difference audio, similarity, and delay. |
 | Audio | `Audio Spectrogram` | Inspect the frequency content of audio as a dBFS spectrogram and output the graph as an `IMAGE`. |
@@ -138,6 +139,16 @@ Media Range (Input).audio
 This integration requires [comfy-Irodori-TTS](https://github.com/jupo-ai/comfy-Irodori-TTS) for the receiving sampler. ALICE Lab Audio Tools still loads normally when it is not installed.
 
 ## Node Reference
+
+### Transcript Range Selector
+
+Selects start and end transcript segments from timestamped transcription data and outputs the corresponding `start_seconds` and `end_seconds`.
+
+The node accepts a `STRING` containing either a JSON segment array/object or timestamped SRT/WebVTT text. Internally each entry is normalized to `text`, `start`, and `end`.
+
+Because transcript data is often produced at execution time, the workflow is human-in-the-loop: run the upstream STT once, choose Start and End from the populated selectors, then run the selector and downstream nodes again.
+
+Connect the two `FLOAT` outputs to the `start_seconds` and `end_seconds` inputs of a Media Range node. For [AIFSH/ComfyUI-WhisperX](https://github.com/AIFSH/ComfyUI-WhisperX), route its `SRT` output through its included `SRTToString` node first.
 
 ### Load Media Range (Upload)
 

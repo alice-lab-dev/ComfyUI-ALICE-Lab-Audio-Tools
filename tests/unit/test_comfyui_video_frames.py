@@ -110,9 +110,12 @@ def test_rejects_non_image_component_layout() -> None:
         AliceLabVideoFirstLastFrame().extract(VideoFromComponents(frames))
 
 
-def test_file_backed_video_decodes_only_short_boundary_windows() -> None:
+def test_file_backed_video_decodes_only_short_boundary_windows(monkeypatch) -> None:
     frames = torch.arange(8 * 2 * 3 * 3, dtype=torch.float32).reshape(8, 2, 3, 3)
     video = _StreamingVideo(frames, duration=120.0)
+    monkeypatch.setattr(
+        _MODULE, "_find_last_frame_offset", lambda video, duration, frame_rate: 118.5
+    )
 
     first, last = AliceLabVideoFirstLastFrame().extract(video)
 
@@ -120,7 +123,7 @@ def test_file_backed_video_decodes_only_short_boundary_windows() -> None:
     assert torch.equal(last, frames[-1:])
     assert len(video.trim_calls) == 2
     assert video.trim_calls[0][0] == 0.0
-    assert video.trim_calls[1][0] > 119.0
+    assert video.trim_calls[1][0] == 118.5
     assert all(duration < 0.1 for _, duration, _ in video.trim_calls)
     assert all(strict is False for _, _, strict in video.trim_calls)
 
