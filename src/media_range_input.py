@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import torch
 
 
@@ -82,3 +84,46 @@ def trim_audio(audio: dict, start_seconds: float, end_seconds: float) -> tuple[d
     actual_start = start_sample / sample_rate
     actual_end = end_sample / sample_rate
     return result, actual_start, actual_end, duration
+
+
+def slice_video_components(
+    components,
+    start_seconds: float,
+    end_seconds: float,
+    duration: float,
+) -> dict:
+    """Slice an in-memory VIDEO before encoding it.
+
+    The returned frame window covers the requested interval. ``frame_offset``
+    records the sub-frame trim needed to retain the exact logical A position
+    after the smaller component VIDEO is encoded.
+    """
+    start, end = normalize_range(start_seconds, end_seconds, duration)
+    images = components.images
+    if images is None or images.ndim != 4 or images.shape[0] == 0:
+        raise ValueError("Media Range (Input) received VIDEO with no frames")
+    frame_rate = float(components.frame_rate)
+    if frame_rate <= 0:
+        raise ValueError("Media Range (Input) received an invalid frame rate")
+
+    frame_count = images.shape[0]
+    first_frame = min(frame_count - 1, max(0, math.floor(start * frame_rate)))
+    final_frame = min(frame_count, max(first_frame + 1, math.ceil(end * frame_rate)))
+    frame_start = first_frame / frame_rate
+
+    audio = getattr(components, "audio", None)
+    selected_audio = None
+    if audio is not None:
+        selected_audio, _, _, _ = trim_audio(audio, frame_start, final_frame / frame_rate)
+
+    alpha = getattr(components, "alpha", None)
+    return {
+        "images": images[first_frame:final_frame],
+        "audio": selected_audio,
+        "frame_rate": components.frame_rate,
+        "metadata": getattr(components, "metadata", None),
+        "alpha": alpha[first_frame:final_frame] if alpha is not None else None,
+        "start": start,
+        "end": end,
+        "frame_offset": start - frame_start,
+    }

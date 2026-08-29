@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import asyncio
 import json
+import math
 import subprocess
 import uuid
 from array import array
@@ -25,6 +26,7 @@ from .media_tools import needs_seekable_video_preview, resolve_media_tool
 from .media_range_input import (
     normalize_range,
     range_ui_payload,
+    slice_video_components,
     trim_audio,
     validate_static_range,
 )
@@ -42,6 +44,20 @@ MEDIA_EXTENSIONS = {
     ".mkv", ".mov", ".mp3", ".mp4", ".mpg", ".mpeg", ".ogg",
     ".opus", ".ts", ".wav", ".webm", ".wma",
 }
+
+
+_input_preview_sources: dict[str, Path] = {}
+
+
+def _input_preview_name(key: str, path: Path) -> str:
+    """Register a server-owned preview source under a stable opaque name."""
+    digest = hashlib.sha256(key.encode()).hexdigest()[:24]
+    suffix = ".wav" if path.suffix.lower() == ".wav" else ".mp4"
+    name = f"alice_lab_media_range_input_{digest}{suffix}"
+    if len(_input_preview_sources) >= 128 and name not in _input_preview_sources:
+        _input_preview_sources.pop(next(iter(_input_preview_sources)))
+    _input_preview_sources[name] = path
+    return name
 
 
 def _media_files() -> list[str]:
@@ -93,7 +109,9 @@ def _resolve_preview_media(filename: str) -> Path:
         raise ValueError("Invalid Media Range input preview")
     if Path(name).suffix.lower() not in {".mp4", ".wav"}:
         raise ValueError("Unsupported Media Range input preview")
-    path = Path(folder_paths.get_temp_directory()) / name
+    path = _input_preview_sources.get(name)
+    if path is None:
+        path = Path(folder_paths.get_temp_directory()) / name
     if not path.is_file():
         raise ValueError("Media Range input preview expired; run the node again")
     return path
@@ -241,26 +259,116 @@ def _extract_audio(path: Path, start_seconds: float, end_seconds: float) -> dict
     return {"waveform": waveform, "sample_rate": 44100}
 
 
-def _create_seekable_video_preview(source: Path, output: Path) -> None:
-    """Create a browser-only MP4 with regular keyframes for arbitrary A seeks."""
-    completed = subprocess.run(
-        [
-            resolve_media_tool("ffmpeg"), "-hide_banner", "-loglevel", "error",
-            "-nostdin", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
-            "-pix_fmt", "yuv420p", "-force_key_frames",
-            "expr:gte(t,n_forced*1)", "-c:a", "copy", "-movflags", "+faststart",
-            "-y", str(output),
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+def _cached_input_video_preview(video, total: float) -> tuple[str, Path, float]:
+    """Register a stable VIDEO source without copying file-backed inputs."""
+    temp = Path(folder_paths.get_temp_directory())
+    if isinstance(video, InputImpl.VideoFromFile):
+        source = video.get_stream_source()
+        active_start, active_duration = video.get_active_trim_window()
+        if isinstance(source, (str, Path)):
+            source_path = Path(source).resolve()
+            stat = source_path.stat()
+            key = (
+                f"file:{source_path}:{stat.st_mtime_ns}:{stat.st_size}:"
+                f"{active_start:.9f}:{active_duration:.9f}"
+            )
+            # Keep the original source path. The preview endpoint receives the
+            # active A-B window and transcodes only that interval for the UI.
+            return _input_preview_name(key, source_path), source_path, active_start
+        else:
+            key = f"buffer-window:{id(video)}:{active_start:.9f}:{active_duration:.9f}"
+    else:
+        key = f"components:{id(video)}:{total:.9f}"
+
+    digest = hashlib.sha256(key.encode()).hexdigest()[:24]
+    preview_path = temp / f"alice_lab_media_range_input_source_{digest}.mp4"
+    if not preview_path.is_file() or preview_path.stat().st_size == 0:
+        partial = preview_path.with_suffix(".part.mp4")
+        partial.unlink(missing_ok=True)
+        video.save_to(
+            str(partial),
+            format=Types.VideoContainer.MP4,
+            codec="auto",
+            metadata=None,
+        )
+        if not partial.is_file() or partial.stat().st_size == 0:
+            partial.unlink(missing_ok=True)
+            raise RuntimeError("Media Range (Input) could not create its video preview")
+        partial.replace(preview_path)
+    return _input_preview_name(key, preview_path), preview_path, 0.0
+
+
+def _trim_component_video(video, start: float, end: float, total: float):
+    """Encode only the requested tensor-backed frame window."""
+    source_components = video.get_components()
+    sliced = slice_video_components(source_components, start, end, total)
+    components = Types.VideoComponents(
+        images=sliced["images"],
+        audio=sliced["audio"],
+        frame_rate=sliced["frame_rate"],
+        metadata=sliced["metadata"],
+        alpha=sliced["alpha"],
     )
-    if completed.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
-        output.unlink(missing_ok=True)
-        detail = completed.stderr.strip()
-        raise RuntimeError(detail or "Media Range (Input) could not create a seekable preview")
+    compact = InputImpl.VideoFromComponents(
+        components,
+        bit_depth=video.get_bit_depth(),
+        color_space=video.get_color_space(),
+    )
+    temp = Path(folder_paths.get_temp_directory())
+    key = f"component-window:{id(video)}:{total:.9f}:{start:.9f}:{end:.9f}"
+    digest = hashlib.sha256(key.encode()).hexdigest()[:24]
+    preview_path = temp / f"alice_lab_media_range_input_source_{digest}.mp4"
+    if not preview_path.is_file() or preview_path.stat().st_size == 0:
+        partial = preview_path.with_suffix(".part.mp4")
+        partial.unlink(missing_ok=True)
+        compact.save_to(
+            str(partial),
+            format=Types.VideoContainer.MP4,
+            codec="auto",
+            metadata=None,
+        )
+        if not partial.is_file() or partial.stat().st_size == 0:
+            partial.unlink(missing_ok=True)
+            raise RuntimeError("Media Range (Input) could not create its video preview")
+        partial.replace(preview_path)
+
+    selected = InputImpl.VideoFromFile(str(preview_path)).as_trimmed(
+        start_time=sliced["frame_offset"],
+        duration=end - start,
+        strict_duration=False,
+    )
+    if selected is None:
+        raise ValueError("The selected video range could not be created")
+    selected_audio = None
+    if sliced["audio"] is not None:
+        selected_audio, _, _, _ = trim_audio(
+            sliced["audio"], sliced["frame_offset"], sliced["frame_offset"] + end - start
+        )
+    preview_name = _input_preview_name(key, preview_path)
+    frame_start = start - sliced["frame_offset"]
+
+    waveform_name = preview_name
+    waveform_offset = -frame_start
+    if source_components.audio is not None:
+        audio_key = f"component-audio:{id(video)}:{total:.9f}"
+        audio_digest = hashlib.sha256(audio_key.encode()).hexdigest()[:24]
+        audio_path = temp / f"alice_lab_media_range_input_audio_{audio_digest}.wav"
+        if not audio_path.is_file() or audio_path.stat().st_size == 0:
+            partial_audio = audio_path.with_suffix(".part.wav")
+            partial_audio.unlink(missing_ok=True)
+            _write_audio_wave(partial_audio, source_components.audio)
+            partial_audio.replace(audio_path)
+        waveform_name = _input_preview_name(audio_key, audio_path)
+        waveform_offset = 0.0
+    return (
+        selected,
+        selected_audio,
+        preview_name,
+        preview_path,
+        -frame_start,
+        waveform_name,
+        waveform_offset,
+    )
 
 
 class AliceLabMediaRange:
@@ -476,9 +584,9 @@ class AliceLabMediaRangeInput:
         if (audio is None) == (video is None):
             raise ValueError("Connect exactly one AUDIO or VIDEO input to Media Range (Input)")
 
-        token = uuid.uuid4().hex
         temp = Path(folder_paths.get_temp_directory())
         if audio is not None:
+            token = uuid.uuid4().hex
             selected_audio, start, end, total = trim_audio(
                 audio, start_seconds, end_seconds
             )
@@ -488,39 +596,55 @@ class AliceLabMediaRangeInput:
             has_video = False
             has_audio = True
         else:
-            filename = f"alice_lab_media_range_input_{token}.mp4"
-            preview_path = temp / filename
-            source_path = temp / f"alice_lab_media_range_input_source_{token}.mp4"
-            video.save_to(
-                str(source_path),
-                format=Types.VideoContainer.MP4,
-                codec="auto",
-                metadata=None,
-            )
-            if not source_path.is_file() or source_path.stat().st_size == 0:
-                raise RuntimeError("Media Range (Input) could not create its video preview")
-            info = _probe(source_path, require_audio=False)
-            # The materialized file is also what the browser operates on. Use
-            # its actual muxed duration so UI markers and backend trimming share
-            # exactly the same timeline for generated and file-backed VIDEO.
-            total = float(info["duration"])
+            total = float(video.get_duration())
             start, end = normalize_range(start_seconds, end_seconds, total)
             has_video = True
-            has_audio = bool(info["has_audio"])
-            _create_seekable_video_preview(source_path, preview_path)
-            selected_audio = None
-            if has_audio:
-                try:
-                    selected_audio = _extract_audio(source_path, start, end)
-                except ValueError:
-                    # A container can advertise an audio stream that ends before
-                    # the selected video interval. Keep the VIDEO range usable.
-                    selected_audio = None
-            selected_video = InputImpl.VideoFromFile(str(source_path)).as_trimmed(
-                start_time=start,
-                duration=end - start,
-                strict_duration=False,
-            )
+            if isinstance(video, InputImpl.VideoFromComponents):
+                (
+                    selected_video,
+                    selected_audio,
+                    filename,
+                    preview_source,
+                    source_offset,
+                    waveform_filename,
+                    waveform_offset,
+                ) = _trim_component_video(video, start, end, total)
+                has_audio = selected_audio is not None
+            else:
+                filename, preview_source, source_offset = _cached_input_video_preview(
+                    video, total
+                )
+                waveform_filename = filename
+                waveform_offset = source_offset
+                info = _probe(preview_source, require_audio=False)
+                has_audio = bool(info["has_audio"])
+
+            if isinstance(video, InputImpl.VideoFromFile):
+                selected_video = video.as_trimmed(
+                    start_time=start,
+                    duration=end - start,
+                    strict_duration=False,
+                )
+                selected_audio = None
+                if has_audio:
+                    try:
+                        selected_audio = _extract_audio(
+                            preview_source, source_offset + start, source_offset + end
+                        )
+                    except ValueError:
+                        selected_audio = None
+            elif not isinstance(video, InputImpl.VideoFromComponents):
+                selected_video = video.as_trimmed(
+                    start_time=start,
+                    duration=end - start,
+                    strict_duration=False,
+                )
+                selected_audio = None
+                if has_audio:
+                    try:
+                        selected_audio = _extract_audio(preview_source, start, end)
+                    except ValueError:
+                        selected_audio = None
             if selected_video is None:
                 raise ValueError("The selected video range could not be created")
 
@@ -531,6 +655,9 @@ class AliceLabMediaRangeInput:
             "has_audio": has_audio,
             "start": start,
             "end": end,
+            "source_offset": source_offset if video is not None else 0.0,
+            "waveform_filename": waveform_filename if video is not None else filename,
+            "waveform_offset": waveform_offset if video is not None else 0.0,
         }
         return {
             "ui": {"alice_lab_media_range_input": [json.dumps(payload)]},
@@ -701,14 +828,37 @@ async def preview(request):
         return web.Response(text=str(error), status=400)
     stat = path.stat()
     source_version = f"{path}:{stat.st_mtime_ns}:{stat.st_size}"
-    if source_version not in _preview_modes:
-        if len(_preview_modes) >= 128:
-            _preview_modes.pop(next(iter(_preview_modes)))
-        _preview_modes[source_version] = await asyncio.to_thread(
-            needs_seekable_video_preview, path
-        )
-    transcode_video = _preview_modes[source_version]
-    preview_mode = "seekable" if transcode_video else "remux"
+    query = request.rel_url.query
+    clip_start_value = query.get("clip_start")
+    clip_end_value = query.get("clip_end")
+    clip_start = clip_end = None
+    if clip_start_value is not None or clip_end_value is not None:
+        try:
+            clip_start = max(0.0, float(clip_start_value))
+            clip_end = float(clip_end_value)
+        except (TypeError, ValueError):
+            return web.Response(text="Invalid preview range", status=400)
+        if (
+            not math.isfinite(clip_start)
+            or not math.isfinite(clip_end)
+            or clip_end <= clip_start
+        ):
+            return web.Response(text="Invalid preview range", status=400)
+
+    if clip_start is not None:
+        # Media Range (Input) already supplies its requested A-B interval. Skip
+        # the full-file keyframe scan and encode only that small browser proxy.
+        transcode_video = True
+        preview_mode = f"clip:{clip_start:.9f}:{clip_end:.9f}"
+    else:
+        if source_version not in _preview_modes:
+            if len(_preview_modes) >= 128:
+                _preview_modes.pop(next(iter(_preview_modes)))
+            _preview_modes[source_version] = await asyncio.to_thread(
+                needs_seekable_video_preview, path
+            )
+        transcode_video = _preview_modes[source_version]
+        preview_mode = "seekable" if transcode_video else "remux"
     cache_key = hashlib.sha256(
         f"adaptive-preview-v3:{preview_mode}:{source_version}".encode()
     ).hexdigest()[:20]
@@ -731,10 +881,16 @@ async def preview(request):
                 if transcode_video
                 else ["-c:v", "copy"]
             )
+            input_args = []
+            duration_args = []
+            if clip_start is not None:
+                input_args = ["-ss", f"{clip_start:.9f}"]
+                duration_args = ["-t", f"{clip_end - clip_start:.9f}"]
             process = await asyncio.create_subprocess_exec(
                 resolve_media_tool("ffmpeg"), "-hide_banner", "-loglevel", "error",
-                "-nostdin", "-i", str(path), "-map", "0:v:0", "-map",
-                "0:a:0?", *video_args, "-c:a", "aac", "-b:a", "192k",
+                "-nostdin", *input_args, "-i", str(path), *duration_args,
+                "-map", "0:v:0", "-map", "0:a:0?", *video_args,
+                "-c:a", "aac", "-b:a", "192k",
                 "-movflags", "+faststart", "-y", str(partial),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,

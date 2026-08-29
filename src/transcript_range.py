@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -163,11 +164,61 @@ def normalize_transcript(transcript: str) -> list[dict[str, Any]]:
     return [_normalize_segment(segment) for segment in raw_segments]
 
 
+def _segments_fingerprint(segments: list[dict[str, Any]]) -> str:
+    normalized = json.dumps(
+        segments,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _stored_transcript_fingerprint(
+    extra_pnginfo: Any,
+    unique_id: Any,
+) -> str | None:
+    """Read the serialized node property without exposing another UI input."""
+    if not isinstance(extra_pnginfo, dict) or unique_id is None:
+        return None
+    workflow = extra_pnginfo.get("workflow")
+    if not isinstance(workflow, dict):
+        return None
+    nodes = workflow.get("nodes")
+    if not isinstance(nodes, list):
+        return None
+    for node in nodes:
+        if not isinstance(node, dict) or str(node.get("id")) != str(unique_id):
+            continue
+        properties = node.get("properties")
+        if not isinstance(properties, dict):
+            return None
+        fingerprint = properties.get("alice_transcript_fingerprint")
+        return fingerprint if isinstance(fingerprint, str) else None
+    return None
+
+
 def select_transcript_range(
     transcript: str,
     start_segment: int,
     end_segment: int,
 ) -> tuple[float, float, list[dict[str, Any]]]:
+    start_seconds, end_seconds, segments, _, _ = _resolve_transcript_range(
+        transcript,
+        start_segment,
+        end_segment,
+        clamp_stale_indices=False,
+    )
+    return start_seconds, end_seconds, segments
+
+
+def _resolve_transcript_range(
+    transcript: str,
+    start_segment: int,
+    end_segment: int,
+    *,
+    clamp_stale_indices: bool,
+) -> tuple[float, float, list[dict[str, Any]], int, int]:
     segments = normalize_transcript(transcript)
 
     try:
@@ -176,10 +227,15 @@ def select_transcript_range(
     except (TypeError, ValueError) as error:
         raise TranscriptFormatError("Transcript segment index must be an integer.") from error
 
-    if start_index < 0 or start_index >= len(segments):
-        raise TranscriptFormatError("Start segment index is out of range.")
-    if end_index < 0 or end_index >= len(segments):
-        raise TranscriptFormatError("End segment index is out of range.")
+    if clamp_stale_indices:
+        last_index = len(segments) - 1
+        start_index = max(0, min(last_index, start_index))
+        end_index = max(start_index, min(last_index, end_index))
+    else:
+        if start_index < 0 or start_index >= len(segments):
+            raise TranscriptFormatError("Start segment index is out of range.")
+        if end_index < 0 or end_index >= len(segments):
+            raise TranscriptFormatError("End segment index is out of range.")
     if end_index < start_index:
         raise TranscriptFormatError(
             "End segment must not precede start segment."
@@ -191,7 +247,7 @@ def select_transcript_range(
     if start_seconds < 0 or end_seconds <= start_seconds:
         raise TranscriptFormatError("Selected transcript range is invalid.")
 
-    return float(start_seconds), float(end_seconds), segments
+    return float(start_seconds), float(end_seconds), segments, start_index, end_index
 
 
 class AliceLabTranscriptRangeSelector:
@@ -221,7 +277,11 @@ class AliceLabTranscriptRangeSelector:
                     "INT",
                     {"default": 0, "min": 0, "max": 1000000, "step": 1},
                 ),
-            }
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
         }
 
     RETURN_TYPES = ("FLOAT", "FLOAT")
@@ -232,17 +292,43 @@ class AliceLabTranscriptRangeSelector:
         "Select start and end dialogue segments from timestamped transcript data."
     )
 
-    def select(self, transcript: str, start_segment: int, end_segment: int):
+    def select(
+        self,
+        transcript: str,
+        start_segment: int,
+        end_segment: int,
+        unique_id: str | None = None,
+        extra_pnginfo: dict[str, Any] | None = None,
+    ):
         # Runtime validation belongs here. When transcript is connected from an
         # upstream STRING node, ComfyUI cannot provide its runtime value during
         # static pre-validation.
-        start_seconds, end_seconds, segments = select_transcript_range(
-            transcript, start_segment, end_segment
+        normalized_segments = normalize_transcript(transcript)
+        current_fingerprint = _segments_fingerprint(normalized_segments)
+        stored_fingerprint = _stored_transcript_fingerprint(extra_pnginfo, unique_id)
+        transcript_changed = (
+            unique_id is not None and stored_fingerprint != current_fingerprint
+        )
+        requested_start = 0 if transcript_changed else start_segment
+        requested_end = 0 if transcript_changed else end_segment
+
+        (
+            start_seconds,
+            end_seconds,
+            segments,
+            resolved_start_segment,
+            resolved_end_segment,
+        ) = _resolve_transcript_range(
+            transcript,
+            requested_start,
+            requested_end,
+            clamp_stale_indices=True,
         )
         payload = {
             "segments": segments,
-            "start_segment": int(start_segment),
-            "end_segment": int(end_segment),
+            "start_segment": resolved_start_segment,
+            "end_segment": resolved_end_segment,
+            "transcript_fingerprint": current_fingerprint,
         }
         return {
             "ui": {

@@ -49,7 +49,6 @@ app.registerExtension({
             const endBacking = node.widgets?.find(
                 (widget) => widget.name === "end_segment"
             );
-
             if (!startBacking || !endBacking) return;
 
             hideBackingWidget(startBacking);
@@ -154,6 +153,12 @@ app.registerExtension({
                     endBacking.value = payload.end_segment;
                 } else if (segments.length) {
                     endBacking.value = Math.max(0, Number(startBacking.value) || 0);
+                }
+
+                if (typeof payload?.transcript_fingerprint === "string") {
+                    node.properties ??= {};
+                    node.properties.alice_transcript_fingerprint =
+                        payload.transcript_fingerprint;
                 }
 
                 applySelection();

@@ -97,3 +97,43 @@ def test_video_mux_drift_is_hidden_behind_the_requested_logical_duration() -> No
             "strict_duration": False,
         }
     ]
+
+
+def test_component_video_is_sliced_before_encoding() -> None:
+    images = torch.arange(10 * 2 * 2 * 3, dtype=torch.float32).reshape(10, 2, 2, 3)
+    audio = {
+        "waveform": torch.arange(40, dtype=torch.float32).reshape(1, 2, 20),
+        "sample_rate": 20,
+    }
+    components = SimpleNamespace(
+        images=images,
+        audio=audio,
+        frame_rate=10,
+        metadata={"kept": True},
+        alpha=None,
+    )
+
+    sliced = _MODULE.slice_video_components(components, 0.2, 0.7, 1.0)
+
+    assert sliced["start"] == 0.2
+    assert sliced["end"] == 0.7
+    assert sliced["frame_offset"] == 0.0
+    assert torch.equal(sliced["images"], images[2:7])
+    assert torch.equal(sliced["audio"]["waveform"], audio["waveform"][..., 4:14])
+    assert sliced["metadata"] == {"kept": True}
+
+
+def test_component_slice_covers_subframe_boundaries() -> None:
+    images = torch.zeros((10, 2, 2, 3))
+    components = SimpleNamespace(
+        images=images,
+        audio=None,
+        frame_rate=10,
+        metadata=None,
+        alpha=None,
+    )
+
+    sliced = _MODULE.slice_video_components(components, 0.25, 0.65, 1.0)
+
+    assert sliced["images"].shape[0] == 5
+    assert sliced["frame_offset"] == pytest.approx(0.05)

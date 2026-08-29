@@ -152,6 +152,102 @@ def test_out_of_range_index_is_rejected():
         select_transcript_range(transcript, 0, 4)
 
 
+def test_node_clamps_stale_indices_after_transcript_becomes_shorter():
+    node = AliceLabTranscriptRangeSelector()
+    transcript = json.dumps(
+        [{"text": "only segment", "start": 0.25, "end": 2.5}]
+    )
+
+    output = node.select(transcript, 7, 9)
+    payload = json.loads(output["ui"]["alice_lab_transcript_range"][0])
+
+    assert output["result"] == (0.25, 2.5)
+    assert payload["start_segment"] == 0
+    assert payload["end_segment"] == 0
+
+
+def test_node_keeps_end_at_or_after_clamped_start():
+    node = AliceLabTranscriptRangeSelector()
+    transcript = json.dumps(
+        [
+            {"text": "first", "start": 0.0, "end": 1.0},
+            {"text": "last", "start": 1.0, "end": 2.0},
+        ]
+    )
+
+    output = node.select(transcript, 8, 0)
+    payload = json.loads(output["ui"]["alice_lab_transcript_range"][0])
+
+    assert output["result"] == (1.0, 2.0)
+    assert payload["start_segment"] == 1
+    assert payload["end_segment"] == 1
+
+
+def test_node_resets_selection_when_transcript_changes():
+    node = AliceLabTranscriptRangeSelector()
+    unique_id = "42"
+    original = json.dumps(
+        [
+            {"text": "first", "start": 0.0, "end": 1.0},
+            {"text": "second", "start": 1.0, "end": 2.0},
+        ]
+    )
+    initial = node.select(
+        original,
+        0,
+        0,
+        unique_id=unique_id,
+        extra_pnginfo={"workflow": {"nodes": [{"id": 42, "properties": {}}]}},
+    )
+    initial_payload = json.loads(initial["ui"]["alice_lab_transcript_range"][0])
+    stored_workflow = {
+        "workflow": {
+            "nodes": [
+                {
+                    "id": 42,
+                    "properties": {
+                        "alice_transcript_fingerprint": initial_payload[
+                            "transcript_fingerprint"
+                        ]
+                    },
+                }
+            ]
+        }
+    }
+
+    unchanged = node.select(
+        original,
+        0,
+        1,
+        unique_id=unique_id,
+        extra_pnginfo=stored_workflow,
+    )
+    assert unchanged["result"] == (0.0, 2.0)
+
+    replacement = json.dumps(
+        [
+            {"text": "new first", "start": 3.0, "end": 4.0},
+            {"text": "new second", "start": 4.0, "end": 5.0},
+        ]
+    )
+    changed = node.select(
+        replacement,
+        1,
+        1,
+        unique_id=unique_id,
+        extra_pnginfo=stored_workflow,
+    )
+    changed_payload = json.loads(changed["ui"]["alice_lab_transcript_range"][0])
+
+    assert changed["result"] == (3.0, 4.0)
+    assert changed_payload["start_segment"] == 0
+    assert changed_payload["end_segment"] == 0
+    assert (
+        changed_payload["transcript_fingerprint"]
+        != initial_payload["transcript_fingerprint"]
+    )
+
+
 def test_node_contract_and_ui_payload():
     node = AliceLabTranscriptRangeSelector()
     transcript = json.dumps(

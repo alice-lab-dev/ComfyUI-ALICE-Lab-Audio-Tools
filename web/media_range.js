@@ -107,7 +107,9 @@ app.registerExtension({
             let sourceHasAudio = false;
             let inputPayload = null;
             let sourceDisplayName = "";
-            let inputHasLoaded = false;
+            let sourceOffset = 0;
+            let waveformOffset = 0;
+            let previewStart = 0;
             let executedRange = null;
             const canvas = document.createElement("canvas");
             canvas.height = 180;
@@ -350,8 +352,9 @@ app.registerExtension({
                         ctx.fillStyle = "#0b1116";
                         ctx.fillText(badge, badgeX + 5, height - 9);
                     }
-                    if (Number.isFinite(activeMedia.currentTime)) {
-                        const px = plotLeft + (activeMedia.currentTime - viewStart) / span * plotWidth;
+                    const playheadTime = logicalMediaTime(activeMedia);
+                    if (Number.isFinite(playheadTime)) {
+                        const px = plotLeft + (playheadTime - viewStart) / span * plotWidth;
                         if (px >= plotLeft && px <= plotRight) {
                             ctx.strokeStyle = "#ffd166"; ctx.lineWidth = 1;
                             ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, height); ctx.stroke();
@@ -375,23 +378,27 @@ app.registerExtension({
                 if (!isInputNode && !mediaWidget?.value) return;
                 if (isInputNode && !inputPayload?.filename) return;
                 const serial = ++waveformSerial;
-                const filename = isInputNode ? inputPayload.filename : mediaWidget.value;
+                const filename = isInputNode
+                    ? inputPayload.waveform_filename || inputPayload.filename
+                    : mediaWidget.value;
                 const points = Math.max(512, Math.min(12000, Math.ceil(canvas.clientWidth * 2)));
                 const query = new URLSearchParams(
                     isInputNode ? { preview: filename } : isPathNode ? { path: filename } : { filename }
                 );
-                query.set("start", String(viewStart));
-                query.set("end", String(viewEnd));
+                query.set("start", String(viewStart + waveformOffset));
+                query.set("end", String(viewEnd + waveformOffset));
                 query.set("points", String(points));
                 try {
                     const response = await api.fetchApi(`/alice_lab_audio_tools/waveform?${query}`);
                     const wave = await response.json();
                     if (!response.ok) throw new Error(wave.error || "Waveform generation failed");
-                    const currentFilename = isInputNode ? inputPayload?.filename : mediaWidget?.value;
+                    const currentFilename = isInputNode
+                        ? inputPayload?.waveform_filename || inputPayload?.filename
+                        : mediaWidget?.value;
                     if (serial !== waveformSerial || filename !== currentFilename) return;
                     peaks = wave.peaks || [];
-                    waveformStart = Number(wave.start ?? viewStart);
-                    waveformEnd = Number(wave.end ?? viewEnd);
+                    waveformStart = Number(wave.start ?? viewStart) - waveformOffset;
+                    waveformEnd = Number(wave.end ?? viewEnd) - waveformOffset;
                     if (resetNormalization) {
                         const maximum = peaks.reduce((result, value) => {
                             const pair = Array.isArray(value) ? value : [-Number(value || 0), Number(value || 0)];
@@ -412,7 +419,7 @@ app.registerExtension({
                 draw();
             }
 
-            async function loadMedia(resetInputSelection = false) {
+            async function loadMedia() {
                 // Ignore stale responses if another file is selected while the
                 // metadata or waveform request is still in flight.
                 const serial = ++loadSerial;
@@ -466,36 +473,35 @@ app.registerExtension({
                         startWidget,
                         matchingExecutedRange
                             ? matchingExecutedRange.start
-                            : isInputNode && !resetInputSelection ? Number(info.start) : 0
+                            : isInputNode ? Number(info.start) : 0
                     );
                     updateWidget(
                         endWidget,
                         matchingExecutedRange
                             ? matchingExecutedRange.end
-                            : isInputNode && !resetInputSelection ? Number(info.end) : duration
+                            : isInputNode ? Number(info.end) : duration
                     );
                     sourceHasVideo = Boolean(info.has_video);
                     sourceHasAudio = info.has_audio !== false;
+                    sourceOffset = isInputNode ? Number(info.source_offset || 0) : 0;
+                    waveformOffset = isInputNode
+                        ? Number(info.waveform_offset ?? info.source_offset ?? 0)
+                        : 0;
+                    previewStart = isInputNode && sourceHasVideo ? Number(info.start) : 0;
                     sourceDisplayName = isInputNode
                         ? `${sourceHasVideo ? "VIDEO" : "AUDIO"} input · ${formatTime(duration)}`
                         : filename;
-                    const inputMediaQuery = new URLSearchParams({
-                        filename,
-                        subfolder: "",
-                        type: "temp",
-                        cache: Date.now().toString(),
-                    });
                     if (info.has_video) {
                         video.style.display = "block";
                         audio.style.display = "none";
                         activeMedia = video;
                         activeMedia.preload = isInputNode ? "auto" : "metadata";
+                        if (isInputNode) {
+                            query.set("clip_start", String(sourceOffset + Number(info.start)));
+                            query.set("clip_end", String(sourceOffset + Number(info.end)));
+                        }
                         query.set("cache", Date.now().toString());
-                        video.src = api.apiURL(
-                            isInputNode
-                                ? `/view?${inputMediaQuery}`
-                                : `/alice_lab_audio_tools/preview?${query}`
-                        );
+                        video.src = api.apiURL(`/alice_lab_audio_tools/preview?${query}`);
                     } else {
                         video.style.display = "none";
                         audio.style.display = "block";
@@ -505,11 +511,7 @@ app.registerExtension({
                         // FFmpeg accepts considerably more audio encodings than
                         // Chromium/Safari media elements. Use a cached AAC proxy
                         // for UI playback while Run still reads the source file.
-                        audio.src = api.apiURL(
-                            isInputNode
-                                ? `/view?${inputMediaQuery}`
-                                : `/alice_lab_audio_tools/audio_preview?${query}`
-                        );
+                        audio.src = api.apiURL(`/alice_lab_audio_tools/audio_preview?${query}`);
                     }
                     // Force the media element to discard the old decoder and
                     // fetch the newly selected audio or video immediately.
@@ -542,7 +544,17 @@ app.registerExtension({
                 // A-B play handler performs seek+play together, so defer this
                 // visual-only seek until the browser has current frame data.
                 if (isInputNode && activeMedia.readyState < 2) return;
-                activeMedia.currentTime = time;
+                activeMedia.currentTime = mediaTimeForLogical(time, activeMedia);
+            }
+
+            function mediaTimeForLogical(time, media = activeMedia) {
+                const offset = isInputNode && sourceHasVideo ? previewStart : 0;
+                return Math.max(0, Math.min(Number(media.duration) || duration, time - offset));
+            }
+
+            function logicalMediaTime(media = activeMedia) {
+                const offset = isInputNode && sourceHasVideo ? previewStart : 0;
+                return Number(media.currentTime) + offset;
             }
 
             function updateWaveformCursor(event) {
@@ -745,7 +757,7 @@ app.registerExtension({
                 rangePlayback = false;
                 media.pause();
                 if (seekToEnd) {
-                    media.currentTime = Math.min(endWidget.value, media.duration || endWidget.value);
+                    media.currentTime = mediaTimeForLogical(endWidget.value, media);
                 }
                 showRangePlayButton();
             }
@@ -756,7 +768,7 @@ app.registerExtension({
                     // Assigning currentTime first is important for sparse-GOP
                     // Upload previews whose backward seek can be asynchronous.
                     rangePlayback = false;
-                    media.currentTime = startWidget.value;
+                    media.currentTime = mediaTimeForLogical(startWidget.value, media);
                     rangePlayback = true;
                     const playback = media.play();
                     playback?.catch((error) => {
@@ -785,8 +797,9 @@ app.registerExtension({
                         rangePlayback = false;
                         activeMedia.pause();
                         const start = startWidget.value;
-                        const seekReady = waitForSeek(activeMedia, start);
-                        activeMedia.currentTime = start;
+                        const mediaStart = mediaTimeForLogical(start, activeMedia);
+                        const seekReady = waitForSeek(activeMedia, mediaStart);
+                        activeMedia.currentTime = mediaStart;
                         // Call play synchronously from the click gesture, but
                         // only after currentTime no longer points at B/ended.
                         rangePlayback = true;
@@ -893,7 +906,7 @@ app.registerExtension({
                 media.addEventListener("timeupdate", () => {
                     // Native media playback has no A-B boundary, so enforce it
                     // only while the dedicated A-B playback mode is active.
-                    if (media === activeMedia && rangePlayback && media.currentTime >= endWidget.value) {
+                    if (media === activeMedia && rangePlayback && logicalMediaTime(media) >= endWidget.value) {
                         handleRangeEnd(media);
                     }
                     if (media === activeMedia) draw();
@@ -946,9 +959,7 @@ app.registerExtension({
                             ?? message?.alice_lab_media_range_input;
                         inputPayload = typeof raw === "string" ? JSON.parse(raw) : raw;
                         if (!inputPayload?.filename) throw new Error("Input preview data is missing");
-                        const resetInputSelection = !inputHasLoaded;
-                        inputHasLoaded = true;
-                        loadMedia(resetInputSelection);
+                        loadMedia();
                     } catch (error) {
                         label.textContent = `ALICE Lab: ${error.message}`;
                     }
