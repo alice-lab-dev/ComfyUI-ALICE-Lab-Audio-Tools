@@ -49,6 +49,9 @@ app.registerExtension({
             const endBacking = node.widgets?.find(
                 (widget) => widget.name === "end_segment"
             );
+            const endModeWidget = node.widgets?.find(
+                (widget) => widget.name === "end_mode"
+            );
             if (!startBacking || !endBacking) return;
 
             hideBackingWidget(startBacking);
@@ -56,6 +59,44 @@ app.registerExtension({
 
             let segments = [];
             let labels = ["Run once to load transcript"];
+            const endModes = new Set([
+                "Same segment",
+                "Keep current",
+                "Next segment",
+            ]);
+
+            function normalizeEndMode() {
+                if (!endModeWidget) return "Same segment";
+                if (!endModes.has(String(endModeWidget.value))) {
+                    // Older workflows stored the custom Start combo at this
+                    // widget position. Migrate that serialized value safely.
+                    endModeWidget.value = "Same segment";
+                }
+                return String(endModeWidget.value);
+            }
+
+            function endIndexForStart(startIndex) {
+                const lastIndex = Math.max(0, segments.length - 1);
+                const mode = normalizeEndMode();
+                if (mode === "Next segment") {
+                    return Math.min(lastIndex, startIndex + 1);
+                }
+                if (mode === "Keep current") {
+                    const currentEnd = Math.max(
+                        0,
+                        Math.min(lastIndex, Number(endBacking.value) || 0)
+                    );
+                    return Math.max(startIndex, currentEnd);
+                }
+                return startIndex;
+            }
+
+            function followStartWithEnd(startIndex) {
+                if (!segments.length) return;
+                const endIndex = endIndexForStart(startIndex);
+                endBacking.value = endIndex;
+                endCombo.value = labels[endIndex];
+            }
 
             const startCombo = node.addWidget(
                 "combo",
@@ -65,14 +106,22 @@ app.registerExtension({
                     const index = labels.indexOf(value);
                     if (index >= 0) {
                         startBacking.value = index;
-                        if (endBacking.value < index) {
-                            endBacking.value = index;
-                            endCombo.value = labels[index];
-                        }
+                        followStartWithEnd(index);
                     }
                 },
                 { values: () => labels }
             );
+
+            if (endModeWidget) {
+                chainCallback(endModeWidget, "callback", function () {
+                    const startIndex = Math.max(
+                        0,
+                        Math.min(segments.length - 1, Number(startBacking.value) || 0)
+                    );
+                    followStartWithEnd(startIndex);
+                    node.setDirtyCanvas(true, true);
+                });
+            }
 
             const endCombo = node.addWidget(
                 "combo",
@@ -166,6 +215,7 @@ app.registerExtension({
             };
 
             chainCallback(node, "onConfigure", function () {
+                normalizeEndMode();
                 applySelection();
             });
 

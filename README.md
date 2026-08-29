@@ -148,6 +148,8 @@ The node accepts a `STRING` containing either a JSON segment array/object or tim
 
 Because transcript data is often produced at execution time, the workflow is human-in-the-loop: run the upstream STT once, choose Start and End from the populated selectors, then run the selector and downstream nodes again.
 
+`End mode` controls how End follows a Start change: `Same segment` selects one dialogue segment, `Keep current` preserves End unless it would precede Start, and `Next segment` includes the following segment when available. The default is `Same segment`.
+
 Connect the two `FLOAT` outputs to the `start_seconds` and `end_seconds` inputs of a Media Range node. For [AIFSH/ComfyUI-WhisperX](https://github.com/AIFSH/ComfyUI-WhisperX), route its `SRT` output through its included `SRTToString` node first.
 
 ### Load Media Range (Upload)
@@ -190,7 +192,7 @@ Use this node only on a trusted ComfyUI server. Do not expose unrestricted serve
 
 ### Media Range (Input)
 
-Loads exactly one upstream `AUDIO` or `VIDEO` value. You can preview it, select an A-B range from its waveform, and output that selection downstream.
+Loads exactly one upstream `AUDIO` or `VIDEO` value. `start_seconds` and `end_seconds` define a coarse input window on the upstream timeline. The waveform, preview, and A-B controls then use a local timeline beginning at zero inside that window.
 
 This node can also be used to preview upstream output.
 
@@ -199,7 +201,7 @@ Accepts exactly one upstream input:
 - `audio`: preserves the input sample rate and channels while trimming samples directly.
 - `video`: trims the video and, when present, extracts its audio as 44.1 kHz stereo.
 
-Run the node once to load its preview and duration. The initial `end_seconds = 0` selects the complete input. Edit A-B, then run again to produce the selected range.
+Run the node once to load the coarse window. The initial `end_seconds = 0` uses the complete upstream input, while the initial local `B = 0` uses the complete coarse window. Local A-B values are preserved across input-window changes when valid and are clamped or reset only when they no longer fit. The outputs report the final selection at `start_seconds + A` through `start_seconds + B` on the upstream input timeline.
 
 For an audio-only input, the `video` output is unavailable. For a video without an audio stream, the `audio` output is unavailable.
 

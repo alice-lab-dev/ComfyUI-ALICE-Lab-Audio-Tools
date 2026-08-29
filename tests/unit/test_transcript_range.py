@@ -10,9 +10,24 @@ sys.path.insert(0, str(ROOT / "src"))
 from transcript_range import (
     AliceLabTranscriptRangeSelector,
     TranscriptFormatError,
+    end_index_for_start,
     normalize_transcript,
     select_transcript_range,
 )
+
+
+@pytest.mark.parametrize(
+    ("mode", "start", "current_end", "count", "expected"),
+    [
+        ("Same segment", 2, 4, 6, 2),
+        ("Keep current", 2, 4, 6, 4),
+        ("Keep current", 4, 2, 6, 4),
+        ("Next segment", 2, 4, 6, 3),
+        ("Next segment", 5, 1, 6, 5),
+    ],
+)
+def test_end_follow_modes(mode, start, current_end, count, expected):
+    assert end_index_for_start(mode, start, current_end, count) == expected
 
 
 def test_multiple_segments_returns_selected_bounds():
@@ -264,6 +279,7 @@ def test_node_contract_and_ui_payload():
     assert node.RETURN_NAMES == ("start_seconds", "end_seconds")
     assert node.FUNCTION == "select"
     assert node.CATEGORY == "ALICE_Lab/Media"
+    assert node.INPUT_TYPES()["required"]["end_mode"][1]["default"] == "Same segment"
     assert output["result"] == (1.0, 5.0)
     assert payload["start_segment"] == 0
     assert payload["end_segment"] == 1

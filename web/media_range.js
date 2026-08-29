@@ -61,8 +61,27 @@ app.registerExtension({
                 replacement.value = previousValue;
                 mediaWidget = replacement;
             }
-            const startWidget = node.widgets.find((widget) => widget.name === "start_seconds");
-            const endWidget = node.widgets.find((widget) => widget.name === "end_seconds");
+            const inputStartWidget = node.widgets.find(
+                (widget) => widget.name === "start_seconds"
+            );
+            const inputEndWidget = node.widgets.find(
+                (widget) => widget.name === "end_seconds"
+            );
+            const aWidget = isInputNode
+                ? node.widgets.find((widget) => widget.name === "a_seconds")
+                : null;
+            const bWidget = isInputNode
+                ? node.widgets.find((widget) => widget.name === "b_seconds")
+                : null;
+            const startWidget = isInputNode ? aWidget : inputStartWidget;
+            const endWidget = isInputNode ? bWidget : inputEndWidget;
+            if (!startWidget || !endWidget) return;
+            if (isInputNode) {
+                for (const backing of [aWidget, bWidget]) {
+                    backing.computeSize = () => [0, -4];
+                    backing.hidden = true;
+                }
+            }
             // All interaction state is scoped to this node instance so several
             // media-range nodes can coexist in one workflow independently.
             let duration = 0;
@@ -473,13 +492,13 @@ app.registerExtension({
                         startWidget,
                         matchingExecutedRange
                             ? matchingExecutedRange.start
-                            : isInputNode ? Number(info.start) : 0
+                            : isInputNode ? Number(info.a ?? info.start) : 0
                     );
                     updateWidget(
                         endWidget,
                         matchingExecutedRange
                             ? matchingExecutedRange.end
-                            : isInputNode ? Number(info.end) : duration
+                            : isInputNode ? Number(info.b ?? info.end) : duration
                     );
                     sourceHasVideo = Boolean(info.has_video);
                     sourceHasAudio = info.has_audio !== false;
@@ -487,9 +506,12 @@ app.registerExtension({
                     waveformOffset = isInputNode
                         ? Number(info.waveform_offset ?? info.source_offset ?? 0)
                         : 0;
-                    previewStart = isInputNode && sourceHasVideo ? Number(info.start) : 0;
+                    previewStart = 0;
                     sourceDisplayName = isInputNode
-                        ? `${sourceHasVideo ? "VIDEO" : "AUDIO"} input · ${formatTime(duration)}`
+                        ? `${sourceHasVideo ? "VIDEO" : "AUDIO"} input · ` +
+                            `${formatTime(Number(info.input_start ?? 0))}–` +
+                            `${formatTime(Number(info.input_end ?? duration))} · ` +
+                            `${formatTime(duration)}`
                         : filename;
                     if (info.has_video) {
                         video.style.display = "block";
@@ -497,8 +519,8 @@ app.registerExtension({
                         activeMedia = video;
                         activeMedia.preload = isInputNode ? "auto" : "metadata";
                         if (isInputNode) {
-                            query.set("clip_start", String(sourceOffset + Number(info.start)));
-                            query.set("clip_end", String(sourceOffset + Number(info.end)));
+                            query.set("clip_start", String(sourceOffset));
+                            query.set("clip_end", String(sourceOffset + duration));
                         }
                         query.set("cache", Date.now().toString());
                         video.src = api.apiURL(`/alice_lab_audio_tools/preview?${query}`);
@@ -507,6 +529,10 @@ app.registerExtension({
                         audio.style.display = "block";
                         activeMedia = audio;
                         activeMedia.preload = isInputNode ? "auto" : "metadata";
+                        if (isInputNode) {
+                            query.set("clip_start", String(sourceOffset));
+                            query.set("clip_end", String(sourceOffset + duration));
+                        }
                         query.set("cache", Date.now().toString());
                         // FFmpeg accepts considerably more audio encodings than
                         // Chromium/Safari media elements. Use a cached AAC proxy

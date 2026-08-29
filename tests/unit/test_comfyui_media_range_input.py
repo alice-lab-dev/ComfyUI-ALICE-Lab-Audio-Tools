@@ -57,6 +57,22 @@ def test_range_clamps_only_the_end_when_it_still_overlaps_input() -> None:
     assert _MODULE.normalize_range(1.0, 3.0, 2.0) == (1.0, 2.0)
 
 
+def test_local_ab_is_preserved_inside_a_changed_input_window() -> None:
+    assert _MODULE.normalize_local_range(0.2, 1.4, 1.72) == (0.2, 1.4)
+
+
+def test_local_ab_end_is_clamped_to_a_shorter_input_window() -> None:
+    assert _MODULE.normalize_local_range(0.2, 1.4, 1.0) == (0.2, 1.0)
+
+
+def test_local_ab_resets_when_start_is_outside_the_input_window() -> None:
+    assert _MODULE.normalize_local_range(1.2, 1.4, 1.0) == (0.0, 1.0)
+
+
+def test_zero_local_b_selects_the_complete_input_window() -> None:
+    assert _MODULE.normalize_local_range(0.4, 0.0, 1.72) == (0.0, 1.72)
+
+
 @pytest.mark.parametrize(
     ("start", "end"),
     [(None, 10.0), (0.0, None), (None, None)],

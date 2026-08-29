@@ -11,6 +11,30 @@ class TranscriptFormatError(ValueError):
     """Raised when transcript data cannot be normalized safely."""
 
 
+END_FOLLOW_MODES = ("Same segment", "Keep current", "Next segment")
+
+
+def end_index_for_start(
+    mode: str,
+    start_index: int,
+    current_end_index: int,
+    segment_count: int,
+) -> int:
+    """Resolve End when the user changes Start in one of the UI modes."""
+    if mode not in END_FOLLOW_MODES:
+        raise TranscriptFormatError(f"Unsupported End follow mode: {mode}")
+    if segment_count <= 0:
+        raise TranscriptFormatError("Transcript contains no segments.")
+    last_index = segment_count - 1
+    start = max(0, min(last_index, int(start_index)))
+    if mode == "Same segment":
+        return start
+    if mode == "Next segment":
+        return min(last_index, start + 1)
+    current_end = max(0, min(last_index, int(current_end_index)))
+    return max(start, current_end)
+
+
 def _as_finite_seconds(value: Any, field: str) -> float:
     if isinstance(value, bool):
         raise TranscriptFormatError(f"Transcript segment {field} timestamp must be numeric.")
@@ -277,6 +301,10 @@ class AliceLabTranscriptRangeSelector:
                     "INT",
                     {"default": 0, "min": 0, "max": 1000000, "step": 1},
                 ),
+                "end_mode": (
+                    END_FOLLOW_MODES,
+                    {"default": "Same segment"},
+                ),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -297,12 +325,15 @@ class AliceLabTranscriptRangeSelector:
         transcript: str,
         start_segment: int,
         end_segment: int,
+        end_mode: str = "Same segment",
         unique_id: str | None = None,
         extra_pnginfo: dict[str, Any] | None = None,
     ):
         # Runtime validation belongs here. When transcript is connected from an
         # upstream STRING node, ComfyUI cannot provide its runtime value during
         # static pre-validation.
+        if end_mode not in END_FOLLOW_MODES:
+            raise TranscriptFormatError(f"Unsupported End follow mode: {end_mode}")
         normalized_segments = normalize_transcript(transcript)
         current_fingerprint = _segments_fingerprint(normalized_segments)
         stored_fingerprint = _stored_transcript_fingerprint(extra_pnginfo, unique_id)

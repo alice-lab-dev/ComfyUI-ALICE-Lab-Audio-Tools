@@ -68,6 +68,26 @@ def normalize_range(start_seconds: float, end_seconds: float, duration: float) -
     return start, end
 
 
+def normalize_local_range(
+    a_seconds: float,
+    b_seconds: float,
+    duration: float,
+) -> tuple[float, float]:
+    """Keep a serialized local A-B selection inside a new input window."""
+    if duration <= 0:
+        raise ValueError("Media Range (Input) received an empty input range")
+    a = max(0.0, float(a_seconds))
+    b = float(b_seconds)
+    if b <= 0:
+        return 0.0, duration
+    if a >= duration:
+        return 0.0, duration
+    b = min(duration, b)
+    if b <= a:
+        return 0.0, duration
+    return a, b
+
+
 def trim_audio(audio: dict, start_seconds: float, end_seconds: float) -> tuple[dict, float, float, float]:
     """Slice AUDIO without decoding or changing its sample rate and metadata."""
     duration = audio_duration(audio)

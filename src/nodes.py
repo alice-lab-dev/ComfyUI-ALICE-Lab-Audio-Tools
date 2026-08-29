@@ -24,6 +24,8 @@ from .audio_output import AliceLabOutputWaveform
 from .float_output import AliceLabOutputFloat
 from .media_tools import needs_seekable_video_preview, resolve_media_tool
 from .media_range_input import (
+    audio_duration,
+    normalize_local_range,
     normalize_range,
     range_ui_payload,
     slice_video_components,
@@ -298,10 +300,17 @@ def _cached_input_video_preview(video, total: float) -> tuple[str, Path, float]:
     return _input_preview_name(key, preview_path), preview_path, 0.0
 
 
-def _trim_component_video(video, start: float, end: float, total: float):
-    """Encode only the requested tensor-backed frame window."""
+def _trim_component_video(
+    video,
+    input_start: float,
+    input_end: float,
+    a: float,
+    b: float,
+    total: float,
+):
+    """Encode one coarse tensor-backed window, then lazily trim its local A-B."""
     source_components = video.get_components()
-    sliced = slice_video_components(source_components, start, end, total)
+    sliced = slice_video_components(source_components, input_start, input_end, total)
     components = Types.VideoComponents(
         images=sliced["images"],
         audio=sliced["audio"],
@@ -315,7 +324,10 @@ def _trim_component_video(video, start: float, end: float, total: float):
         color_space=video.get_color_space(),
     )
     temp = Path(folder_paths.get_temp_directory())
-    key = f"component-window:{id(video)}:{total:.9f}:{start:.9f}:{end:.9f}"
+    key = (
+        f"component-window:{id(video)}:{total:.9f}:"
+        f"{input_start:.9f}:{input_end:.9f}"
+    )
     digest = hashlib.sha256(key.encode()).hexdigest()[:24]
     preview_path = temp / f"alice_lab_media_range_input_source_{digest}.mp4"
     if not preview_path.is_file() or preview_path.stat().st_size == 0:
@@ -333,8 +345,8 @@ def _trim_component_video(video, start: float, end: float, total: float):
         partial.replace(preview_path)
 
     selected = InputImpl.VideoFromFile(str(preview_path)).as_trimmed(
-        start_time=sliced["frame_offset"],
-        duration=end - start,
+        start_time=sliced["frame_offset"] + a,
+        duration=b - a,
         strict_duration=False,
     )
     if selected is None:
@@ -342,10 +354,12 @@ def _trim_component_video(video, start: float, end: float, total: float):
     selected_audio = None
     if sliced["audio"] is not None:
         selected_audio, _, _, _ = trim_audio(
-            sliced["audio"], sliced["frame_offset"], sliced["frame_offset"] + end - start
+            sliced["audio"],
+            sliced["frame_offset"] + a,
+            sliced["frame_offset"] + b,
         )
     preview_name = _input_preview_name(key, preview_path)
-    frame_start = start - sliced["frame_offset"]
+    frame_start = input_start - sliced["frame_offset"]
 
     waveform_name = preview_name
     waveform_offset = -frame_start
@@ -554,6 +568,26 @@ class AliceLabMediaRangeInput:
                         "tooltip": "0 selects the full input on the first run.",
                     },
                 ),
+                "a_seconds": (
+                    "FLOAT",
+                    {
+                        "default": 0.0,
+                        "min": 0.0,
+                        "max": 86400.0,
+                        "step": 0.001,
+                        "tooltip": "Local A marker inside the input start/end window.",
+                    },
+                ),
+                "b_seconds": (
+                    "FLOAT",
+                    {
+                        "default": 0.0,
+                        "min": 0.0,
+                        "max": 86400.0,
+                        "step": 0.001,
+                        "tooltip": "Local B marker; 0 selects the complete input window.",
+                    },
+                ),
             },
             "optional": {
                 "audio": ("AUDIO",),
@@ -571,13 +605,18 @@ class AliceLabMediaRangeInput:
     )
     FUNCTION = "select"
     CATEGORY = "ALICE_Lab/Media"
-    DESCRIPTION = "Preview and select an A-B range from one connected AUDIO or VIDEO."
+    DESCRIPTION = (
+        "Limit one connected AUDIO or VIDEO to an input window, then preview "
+        "and refine it with a local A-B range."
+    )
     OUTPUT_NODE = True
 
     def select(
         self,
         start_seconds: float,
         end_seconds: float,
+        a_seconds: float = 0.0,
+        b_seconds: float = 0.0,
         audio: dict | None = None,
         video=None,
     ):
@@ -587,17 +626,34 @@ class AliceLabMediaRangeInput:
         temp = Path(folder_paths.get_temp_directory())
         if audio is not None:
             token = uuid.uuid4().hex
-            selected_audio, start, end, total = trim_audio(
-                audio, start_seconds, end_seconds
+            total = audio_duration(audio)
+            input_start, input_end = normalize_range(
+                start_seconds, end_seconds, total
             )
+            input_duration = input_end - input_start
+            a, b = normalize_local_range(a_seconds, b_seconds, input_duration)
+            selected_audio, selected_start, selected_end, _ = trim_audio(
+                audio, input_start + a, input_start + b
+            )
+            a = selected_start - input_start
+            b = selected_end - input_start
             filename = f"alice_lab_media_range_input_{token}.wav"
             _write_audio_wave(temp / filename, audio)
             selected_video = None
             has_video = False
             has_audio = True
+            source_offset = input_start
+            waveform_filename = filename
+            waveform_offset = input_start
         else:
             total = float(video.get_duration())
-            start, end = normalize_range(start_seconds, end_seconds, total)
+            input_start, input_end = normalize_range(
+                start_seconds, end_seconds, total
+            )
+            input_duration = input_end - input_start
+            a, b = normalize_local_range(a_seconds, b_seconds, input_duration)
+            selected_start = input_start + a
+            selected_end = input_start + b
             has_video = True
             if isinstance(video, InputImpl.VideoFromComponents):
                 (
@@ -608,7 +664,14 @@ class AliceLabMediaRangeInput:
                     source_offset,
                     waveform_filename,
                     waveform_offset,
-                ) = _trim_component_video(video, start, end, total)
+                ) = _trim_component_video(
+                    video,
+                    input_start,
+                    input_end,
+                    a,
+                    b,
+                    total,
+                )
                 has_audio = selected_audio is not None
             else:
                 filename, preview_source, source_offset = _cached_input_video_preview(
@@ -621,47 +684,66 @@ class AliceLabMediaRangeInput:
 
             if isinstance(video, InputImpl.VideoFromFile):
                 selected_video = video.as_trimmed(
-                    start_time=start,
-                    duration=end - start,
+                    start_time=selected_start,
+                    duration=selected_end - selected_start,
                     strict_duration=False,
                 )
                 selected_audio = None
                 if has_audio:
                     try:
                         selected_audio = _extract_audio(
-                            preview_source, source_offset + start, source_offset + end
+                            preview_source,
+                            source_offset + selected_start,
+                            source_offset + selected_end,
                         )
                     except ValueError:
                         selected_audio = None
             elif not isinstance(video, InputImpl.VideoFromComponents):
                 selected_video = video.as_trimmed(
-                    start_time=start,
-                    duration=end - start,
+                    start_time=selected_start,
+                    duration=selected_end - selected_start,
                     strict_duration=False,
                 )
                 selected_audio = None
                 if has_audio:
                     try:
-                        selected_audio = _extract_audio(preview_source, start, end)
+                        selected_audio = _extract_audio(
+                            preview_source, selected_start, selected_end
+                        )
                     except ValueError:
                         selected_audio = None
             if selected_video is None:
                 raise ValueError("The selected video range could not be created")
 
+            source_offset += input_start
+            waveform_offset += input_start
+
         payload = {
             "filename": filename,
-            "duration": total,
+            "duration": input_duration,
             "has_video": has_video,
             "has_audio": has_audio,
-            "start": start,
-            "end": end,
-            "source_offset": source_offset if video is not None else 0.0,
-            "waveform_filename": waveform_filename if video is not None else filename,
-            "waveform_offset": waveform_offset if video is not None else 0.0,
+            "input_start": input_start,
+            "input_end": input_end,
+            "a": a,
+            "b": b,
+            # Retain these payload aliases for a browser tab that still has the
+            # previous extension loaded while ComfyUI is restarting.
+            "start": a,
+            "end": b,
+            "source_offset": source_offset,
+            "waveform_filename": waveform_filename,
+            "waveform_offset": waveform_offset,
         }
         return {
             "ui": {"alice_lab_media_range_input": [json.dumps(payload)]},
-            "result": (selected_audio, start, end, end - start, selected_video),
+            "result": (
+                selected_audio,
+                selected_start,
+                selected_end,
+                selected_end - selected_start,
+                selected_video,
+            ),
         }
 
 
@@ -748,9 +830,28 @@ async def audio_preview(request):
         path = _resolve_request_media(request)
     except Exception as error:
         return web.Response(text=str(error), status=400)
+    query = request.rel_url.query
+    clip_start = clip_end = None
+    if query.get("clip_start") is not None or query.get("clip_end") is not None:
+        try:
+            clip_start = max(0.0, float(query.get("clip_start")))
+            clip_end = float(query.get("clip_end"))
+        except (TypeError, ValueError):
+            return web.Response(text="Invalid audio preview range", status=400)
+        if (
+            not math.isfinite(clip_start)
+            or not math.isfinite(clip_end)
+            or clip_end <= clip_start
+        ):
+            return web.Response(text="Invalid audio preview range", status=400)
     stat = path.stat()
+    clip_key = (
+        f":{clip_start:.9f}:{clip_end:.9f}"
+        if clip_start is not None
+        else ":full"
+    )
     cache_key = hashlib.sha256(
-        f"audio-preview:{path}:{stat.st_mtime_ns}:{stat.st_size}".encode()
+        f"audio-preview:{path}:{stat.st_mtime_ns}:{stat.st_size}{clip_key}".encode()
     ).hexdigest()[:20]
     proxy = Path(folder_paths.get_temp_directory()) / f"alice_lab_audio_{cache_key}.m4a"
     lock = _preview_locks.setdefault(f"audio-{cache_key}", asyncio.Lock())
@@ -758,9 +859,15 @@ async def audio_preview(request):
         if not proxy.is_file() or proxy.stat().st_size == 0:
             partial = proxy.with_suffix(".part.m4a")
             partial.unlink(missing_ok=True)
+            input_args = []
+            duration_args = []
+            if clip_start is not None:
+                input_args = ["-ss", f"{clip_start:.9f}"]
+                duration_args = ["-t", f"{clip_end - clip_start:.9f}"]
             process = await asyncio.create_subprocess_exec(
                 resolve_media_tool("ffmpeg"), "-hide_banner", "-loglevel", "error",
-                "-nostdin", "-i", str(path), "-map", "0:a:0", "-vn",
+                "-nostdin", *input_args, "-i", str(path), *duration_args,
+                "-map", "0:a:0", "-vn",
                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
                 "-y", str(partial),
                 stdout=subprocess.DEVNULL,

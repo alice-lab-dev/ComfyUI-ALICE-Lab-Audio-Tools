@@ -146,6 +146,8 @@ Media Range (Input).audio
 
 文字起こし結果は実行時に得られることが多いため、上流STTを一度実行してStart / End候補を読み込み、範囲を選択してからSelector以降を再実行するHuman-in-the-loop方式です。
 
+`End mode`ではStart変更時のEnd追従方法を選べます。`Same segment`は同じセリフ、`Keep current`はStartより前にならない限り現在のEnd、`Next segment`は次のセリフまでを選択します。初期値は`Same segment`です。
+
 2つの`FLOAT`出力はMedia Rangeの`start_seconds`と`end_seconds`へ接続できます。[AIFSH/ComfyUI-WhisperX](https://github.com/AIFSH/ComfyUI-WhisperX)では、同梱の`SRTToString`を介してSRTを`STRING`へ変換してから接続します。
 
 ### Load Media Range (Upload)
@@ -158,7 +160,9 @@ Media Range (Input).audio
 
 ### Load Media Range (Path) / Media Range (Input)
 
-Path版は絶対パスの対応ファイルをコピーせずに開きます。信頼できるComfyUIサーバーだけで使い、信頼できない利用者に無制限のサーバー側パスを公開しないでください。Input版は上流の`AUDIO`または`VIDEO`を1つだけ受け、音声入力のサンプルレート・チャンネルを保持します。初期値`end_seconds = 0`は入力全体を選択します。
+Path版は絶対パスの対応ファイルをコピーせずに開きます。信頼できるComfyUIサーバーだけで使い、信頼できない利用者に無制限のサーバー側パスを公開しないでください。
+
+Input版は上流の`AUDIO`または`VIDEO`を1つだけ受けます。`start_seconds` / `end_seconds`は上流タイムライン上の粗い入力対象範囲を指定し、波形・プレビュー・A/Bはその範囲の先頭を0秒とするローカル時間で動作します。A/Bは入力範囲が変わっても有効なら維持され、範囲外になった場合だけclampまたは全範囲へresetされます。最終出力範囲は`start_seconds + A`から`start_seconds + B`です。初期値`end_seconds = 0`は上流入力全体、ローカル`B = 0`は粗い入力範囲全体を選択します。
 
 ### Audio to Irodori Ref Config
 
