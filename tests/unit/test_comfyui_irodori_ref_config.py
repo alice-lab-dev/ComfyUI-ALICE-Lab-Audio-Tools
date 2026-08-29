@@ -13,7 +13,12 @@ import torch
 def _load_module(temp_directory: Path, monkeypatch):
     folder_paths = types.ModuleType("folder_paths")
     folder_paths.get_temp_directory = lambda: str(temp_directory)
+    folder_paths.get_user_directory = lambda: str(temp_directory / "user")
+    folder_paths.get_system_user_directory = lambda name: str(
+        temp_directory / "user" / f"__{name}"
+    )
     monkeypatch.setitem(sys.modules, "folder_paths", folder_paths)
+    monkeypatch.delitem(sys.modules, "src.cache_store", raising=False)
 
     spec = importlib.util.spec_from_file_location(
         "alice_test_irodori_ref_config",
@@ -106,7 +111,14 @@ def test_same_audio_reuses_one_content_addressed_wave(tmp_path, monkeypatch) -> 
     second = module.audio_to_irodori_ref_config(audio, True, 10.0)
 
     assert first["ref_wav"] == second["ref_wav"]
-    cache = tmp_path / "alice_lab_audio_tools" / "irodori_ref"
+    cache = (
+        tmp_path
+        / "user"
+        / "__alice_lab_audio_tools"
+        / "cache"
+        / "media"
+        / "irodori_ref"
+    )
     assert list(cache.glob("*.wav")) == [Path(first["ref_wav"])]
 
 

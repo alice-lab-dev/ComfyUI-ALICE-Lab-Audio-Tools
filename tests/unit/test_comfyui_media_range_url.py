@@ -126,3 +126,24 @@ def test_url_node_never_materializes_video_components() -> None:
 
     assert "get_components" not in attributes
     assert "VideoFromFile" in attributes
+
+
+def test_url_node_reuses_a_content_addressed_interval_cache() -> None:
+    nodes_path = Path(__file__).parents[2] / "src" / "nodes.py"
+    module = ast.parse(nodes_path.read_text(encoding="utf-8"))
+    url_class = next(
+        statement
+        for statement in module.body
+        if isinstance(statement, ast.ClassDef)
+        and statement.name == "AliceLabMediaRangeURL"
+    )
+    extract = next(
+        statement
+        for statement in url_class.body
+        if isinstance(statement, ast.FunctionDef) and statement.name == "extract"
+    )
+    source = ast.unparse(extract)
+
+    assert "url-range-media" in source
+    assert "cache_path('media', clip_key, suffix, namespace='url_ranges')" in source
+    assert "_input_preview_name(f'url:{clip_key}', clip_path)" in source

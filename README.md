@@ -31,6 +31,7 @@ ComfyUI ALICE Lab Audio Tools is a collection of custom nodes for selecting medi
 | Audio | `Audio to Irodori Ref Config` | Convert `AUDIO` to the `IRODORI_REF_CONFIG` used by comfy-Irodori-TTS reference audio input. |
 | Audio | `Output Waveform` | Play `AUDIO`, inspect its waveform and basic audio information, and pass it downstream unchanged. |
 | Utils | `Output Float` | Display a connected `FLOAT` result with a label and selected precision, then pass it downstream unchanged. |
+| Utils | `ALICE Lab Cache Manager` | Inspect or safely clear ALICE Lab transcript, thumbnail, media, and metadata caches. |
 | Video | `Replace Video Audio` | Keep the video image and replace its soundtrack with processed `AUDIO`. |
 | Video | `Preview Video` | Preview `VIDEO` in the node, download it with a selected filename, and pass it downstream unchanged. |
 | Video | `Video First / Last Frame` | Extract the first and last frames of a `VIDEO` as `IMAGE` outputs. |
@@ -210,7 +211,7 @@ For an audio-only input, the `video` output is unavailable. For a video without 
 
 Accepts a direct `http://` or `https://` media URL that FFmpeg can open. Both a typed URL and a connected `STRING` output are supported. The node does not resolve YouTube page URLs, run yt-dlp, bypass authentication, or handle DRM; use another node to resolve a site-specific page into a direct media stream URL first.
 
-On each execution, FFprobe reads metadata and FFmpeg writes only the requested `start_seconds`–`end_seconds` interval into ComfyUI's temporary directory. The complete remote media is not downloaded or expanded into Python frame tensors. The returned video uses ComfyUI's standard `VIDEO` type, and the selected audio is 44.1 kHz stereo `AUDIO`.
+On each execution, FFprobe reads metadata. FFmpeg writes only the requested `start_seconds`–`end_seconds` interval into the ALICE Lab cache, and an identical URL and interval reuse that local file. The complete remote media is not downloaded or expanded into Python frame tensors. The returned video uses ComfyUI's standard `VIDEO` type, and the selected audio is 44.1 kHz stereo `AUDIO`.
 
 The preview and waveform use the local selected-interval temp file, so UI interaction does not repeatedly access the remote URL. If A-B is moved outside the currently loaded interval, run the workflow again before previewing it. Signed query strings are passed to FFmpeg as one subprocess argument and are omitted from the displayed URL label and error details.
 
@@ -241,7 +242,13 @@ Accepts standard ComfyUI `AUDIO` plus the same `normalize_ref_audio` and `max_re
   </a>
 </p>
 
-The first audio batch is averaged to mono and written at its original sample rate as PCM16 WAV under `ComfyUI/temp/alice_lab_audio_tools/irodori_ref/`. The filename is a content hash, so rerunning identical audio reuses the same file. Currently, this can be used with the IrodoriTTS Sampler from comfy-Irodori-TTS.
+The first audio batch is averaged to mono and written at its original sample rate as a content-addressed PCM16 WAV in the persistent ALICE Lab cache. Rerunning identical audio reuses the same file. Currently, this can be used with the IrodoriTTS Sampler from comfy-Irodori-TTS.
+
+### ALICE Lab Cache Manager
+
+ALICE Lab caches are stored persistently under `ComfyUI/user/__alice_lab_audio_tools/cache/` in four categories: `transcripts`, `thumbnails`, `media`, and `metadata`. They survive ComfyUI restarts, unlike files under `ComfyUI/temp`. Media Range waveform data, browser preview proxies, URL intervals, and Irodori reference WAV files use this shared cache layout.
+
+Use `inspect` to report file counts and byte sizes. To delete cached data, select `clear`, choose one category or `all`, and enable `confirm_clear`. Deletion is restricted to the four category directories and does not follow symbolic links outside the ALICE Lab cache root.
 
 ### Audio Mixer
 

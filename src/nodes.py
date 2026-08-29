@@ -15,6 +15,13 @@ import torch
 from comfy.cli_args import args
 from comfy_api.latest import InputImpl, Types
 
+from .cache_manager import AliceLabCacheManager
+from .cache_store import (
+    atomic_write_json,
+    cache_key,
+    cache_path,
+    local_source_identity,
+)
 from .audio_compare import (
     AliceLabCompareAudio,
     analyse_compare_region,
@@ -288,7 +295,6 @@ def _extract_audio(path: Path, start_seconds: float, end_seconds: float) -> dict
 
 def _cached_input_video_preview(video, total: float) -> tuple[str, Path, float]:
     """Register a stable VIDEO source without copying file-backed inputs."""
-    temp = Path(folder_paths.get_temp_directory())
     if isinstance(video, InputImpl.VideoFromFile):
         source = video.get_stream_source()
         active_start, active_duration = video.get_active_trim_window()
@@ -307,9 +313,10 @@ def _cached_input_video_preview(video, total: float) -> tuple[str, Path, float]:
     else:
         key = f"components:{id(video)}:{total:.9f}"
 
-    digest = hashlib.sha256(key.encode()).hexdigest()[:24]
-    preview_path = temp / f"alice_lab_media_range_input_source_{digest}.mp4"
+    digest = cache_key("input-video-preview", key)
+    preview_path = cache_path("media", digest, ".mp4", namespace="input_video")
     if not preview_path.is_file() or preview_path.stat().st_size == 0:
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
         partial = preview_path.with_suffix(".part.mp4")
         partial.unlink(missing_ok=True)
         video.save_to(
@@ -348,14 +355,14 @@ def _trim_component_video(
         bit_depth=video.get_bit_depth(),
         color_space=video.get_color_space(),
     )
-    temp = Path(folder_paths.get_temp_directory())
     key = (
         f"component-window:{id(video)}:{total:.9f}:"
         f"{input_start:.9f}:{input_end:.9f}"
     )
-    digest = hashlib.sha256(key.encode()).hexdigest()[:24]
-    preview_path = temp / f"alice_lab_media_range_input_source_{digest}.mp4"
+    digest = cache_key("component-video-preview", key)
+    preview_path = cache_path("media", digest, ".mp4", namespace="input_video")
     if not preview_path.is_file() or preview_path.stat().st_size == 0:
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
         partial = preview_path.with_suffix(".part.mp4")
         partial.unlink(missing_ok=True)
         compact.save_to(
@@ -390,9 +397,10 @@ def _trim_component_video(
     waveform_offset = -frame_start
     if source_components.audio is not None:
         audio_key = f"component-audio:{id(video)}:{total:.9f}"
-        audio_digest = hashlib.sha256(audio_key.encode()).hexdigest()[:24]
-        audio_path = temp / f"alice_lab_media_range_input_audio_{audio_digest}.wav"
+        audio_digest = cache_key("component-audio-preview", audio_key)
+        audio_path = cache_path("media", audio_digest, ".wav", namespace="input_audio")
         if not audio_path.is_file() or audio_path.stat().st_size == 0:
+            audio_path.parent.mkdir(parents=True, exist_ok=True)
             partial_audio = audio_path.with_suffix(".part.wav")
             partial_audio.unlink(missing_ok=True)
             _write_audio_wave(partial_audio, source_components.audio)
@@ -675,29 +683,32 @@ class AliceLabMediaRangeURL(AliceLabMediaRange):
             raise ValueError("End time must be later than start time")
 
         has_video = bool(info["has_video"])
-        token = uuid.uuid4().hex
         suffix = ".mp4" if has_video else ".wav"
-        clip_path = (
-            Path(folder_paths.get_temp_directory())
-            / f"alice_lab_media_range_url_{token}{suffix}"
+        clip_key = cache_key(
+            "url-range-media",
+            {"url": source},
+            {"start": round(start, 9), "end": round(end, 9), "video": has_video},
         )
-        partial = clip_path.with_suffix(f".part{suffix}")
-        command = build_url_clip_command(
-            resolve_media_tool("ffmpeg"),
-            source,
-            start,
-            end,
-            str(partial),
-            has_video=has_video,
-        )
-        completed = subprocess.run(command, capture_output=True)
-        if completed.returncode != 0:
-            partial.unlink(missing_ok=True)
-            raise ValueError(media_url_failure(completed.stderr, source))
-        if not partial.is_file() or partial.stat().st_size == 0:
-            partial.unlink(missing_ok=True)
-            raise ValueError(media_url_failure("FFmpeg produced no media data.", source))
-        partial.replace(clip_path)
+        clip_path = cache_path("media", clip_key, suffix, namespace="url_ranges")
+        partial = clip_path.with_name(f".{clip_path.stem}.{uuid.uuid4().hex}.part{suffix}")
+        if not clip_path.is_file() or clip_path.stat().st_size == 0:
+            clip_path.parent.mkdir(parents=True, exist_ok=True)
+            command = build_url_clip_command(
+                resolve_media_tool("ffmpeg"),
+                source,
+                start,
+                end,
+                str(partial),
+                has_video=has_video,
+            )
+            completed = subprocess.run(command, capture_output=True)
+            if completed.returncode != 0:
+                partial.unlink(missing_ok=True)
+                raise ValueError(media_url_failure(completed.stderr, source))
+            if not partial.is_file() or partial.stat().st_size == 0:
+                partial.unlink(missing_ok=True)
+                raise ValueError(media_url_failure("FFmpeg produced no media data.", source))
+            partial.replace(clip_path)
 
         try:
             clip_info = _probe(clip_path)
@@ -718,7 +729,7 @@ class AliceLabMediaRangeURL(AliceLabMediaRange):
                 clip_path.unlink(missing_ok=True)
                 raise ValueError("The selected video range could not be created")
 
-        preview_name = _input_preview_name(f"url:{token}", clip_path)
+        preview_name = _input_preview_name(f"url:{clip_key}", clip_path)
         payload = {
             "display_source": media_url_display_name(source),
             "filename": preview_name,
@@ -990,30 +1001,29 @@ async def waveform(request):
         start = max(0.0, float(query.get("start", "0")))
         end_value = query.get("end")
         end = float(end_value) if end_value is not None else None
-        stat = path.stat()
         range_key = f"{start:.9f}:{end:.9f}" if end is not None else "overview"
-        cache_key = hashlib.sha256(
-            f"waveform-v2:{path}:{stat.st_mtime_ns}:{stat.st_size}:{points}:{range_key}".encode()
-        ).hexdigest()[:24]
-        cache_path = (
-            Path(folder_paths.get_temp_directory())
-            / f"alice_lab_audio_waveform_{cache_key}.json"
+        waveform_key = cache_key(
+            "waveform-v2",
+            local_source_identity(path),
+            {"points": points, "range": range_key},
         )
+        waveform_path = cache_path("metadata", waveform_key, ".json", namespace="waveforms")
         # Source metadata is part of the key, making cached data stale-proof
         # when a media file is replaced in place.
-        if cache_path.is_file():
-            peaks = json.loads(cache_path.read_text(encoding="utf-8"))
+        cache_hit = waveform_path.is_file()
+        if cache_hit:
+            peaks = json.loads(waveform_path.read_text(encoding="utf-8"))
         else:
             if end is not None and end > start:
                 peaks = await asyncio.to_thread(_waveform_detail, path, points, start, end)
             else:
                 peaks = await asyncio.to_thread(_waveform, path, points)
-            cache_path.write_text(json.dumps(peaks), encoding="utf-8")
+            atomic_write_json(waveform_path, peaks)
         return web.json_response({
             "peaks": peaks,
             "start": start,
             "end": end,
-            "cached": cache_path.is_file(),
+            "cached": cache_hit,
         })
     except Exception as error:
         return web.json_response({"error": str(error)}, status=400)
@@ -1056,19 +1066,21 @@ async def audio_preview(request):
             or clip_end <= clip_start
         ):
             return web.Response(text="Invalid audio preview range", status=400)
-    stat = path.stat()
     clip_key = (
         f":{clip_start:.9f}:{clip_end:.9f}"
         if clip_start is not None
         else ":full"
     )
-    cache_key = hashlib.sha256(
-        f"audio-preview:{path}:{stat.st_mtime_ns}:{stat.st_size}{clip_key}".encode()
-    ).hexdigest()[:20]
-    proxy = Path(folder_paths.get_temp_directory()) / f"alice_lab_audio_{cache_key}.m4a"
-    lock = _preview_locks.setdefault(f"audio-{cache_key}", asyncio.Lock())
+    audio_key = cache_key(
+        "audio-preview",
+        local_source_identity(path),
+        {"clip": clip_key, "codec": "aac-192k"},
+    )
+    proxy = cache_path("media", audio_key, ".m4a", namespace="audio_previews")
+    lock = _preview_locks.setdefault(f"audio-{audio_key}", asyncio.Lock())
     async with lock:
         if not proxy.is_file() or proxy.stat().st_size == 0:
+            proxy.parent.mkdir(parents=True, exist_ok=True)
             partial = proxy.with_suffix(".part.m4a")
             partial.unlink(missing_ok=True)
             input_args = []
@@ -1145,8 +1157,8 @@ async def preview(request):
         path = _resolve_request_media(request)
     except Exception as error:
         return web.Response(text=str(error), status=400)
-    stat = path.stat()
-    source_version = f"{path}:{stat.st_mtime_ns}:{stat.st_size}"
+    source_identity = local_source_identity(path)
+    source_version = json.dumps(source_identity, sort_keys=True, separators=(",", ":"))
     query = request.rel_url.query
     clip_start_value = query.get("clip_start")
     clip_end_value = query.get("clip_end")
@@ -1178,15 +1190,18 @@ async def preview(request):
             )
         transcode_video = _preview_modes[source_version]
         preview_mode = "seekable" if transcode_video else "remux"
-    cache_key = hashlib.sha256(
-        f"adaptive-preview-v3:{preview_mode}:{source_version}".encode()
-    ).hexdigest()[:20]
-    proxy = Path(folder_paths.get_temp_directory()) / f"alice_lab_audio_tools_{cache_key}.mp4"
+    preview_key = cache_key(
+        "adaptive-preview-v3",
+        source_identity,
+        {"mode": preview_mode, "max_width": 854, "max_height": 480},
+    )
+    proxy = cache_path("thumbnails", preview_key, ".mp4", namespace="media_range")
     # Multiple nodes can request one preview concurrently. A per-source lock
     # prevents competing ffmpeg processes from writing the same proxy.
-    lock = _preview_locks.setdefault(cache_key, asyncio.Lock())
+    lock = _preview_locks.setdefault(preview_key, asyncio.Lock())
     async with lock:
         if not proxy.is_file() or proxy.stat().st_size == 0:
+            proxy.parent.mkdir(parents=True, exist_ok=True)
             # Replace atomically so the browser never observes a partial MP4.
             partial = proxy.with_suffix(".part.mp4")
             partial.unlink(missing_ok=True)
@@ -1242,6 +1257,7 @@ NODE_CLASS_MAPPINGS = {
     "AliceLabAudioToIrodoriRefConfig": AliceLabAudioToIrodoriRefConfig,
     "AliceLabTranscriptRangeSelector": AliceLabTranscriptRangeSelector,
     "AliceLabVideoFirstLastFrame": AliceLabVideoFirstLastFrame,
+    "AliceLabCacheManager": AliceLabCacheManager,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AliceLabMediaRange": "Load Media Range (Upload)",
@@ -1258,4 +1274,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AliceLabAudioToIrodoriRefConfig": "Audio to Irodori Ref Config",
     "AliceLabTranscriptRangeSelector": "Transcript Range Selector",
     "AliceLabVideoFirstLastFrame": "Video First / Last Frame",
+    "AliceLabCacheManager": "ALICE Lab Cache Manager",
 }

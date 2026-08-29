@@ -5,8 +5,12 @@ import uuid
 import wave
 from pathlib import Path
 
-import folder_paths
 import torch
+
+try:
+    from .cache_store import cache_path
+except ImportError:  # Standalone module loading used by the unit tests.
+    from src.cache_store import cache_path
 
 
 _CACHE_FORMAT = b"alice-lab-irodori-ref-mono-pcm16-v1\0"
@@ -53,12 +57,7 @@ def _cache_path(pcm: bytes, sample_rate: int) -> Path:
     digest.update(str(sample_rate).encode("ascii"))
     digest.update(b"\0")
     digest.update(pcm)
-    cache_dir = (
-        Path(folder_paths.get_temp_directory())
-        / "alice_lab_audio_tools"
-        / "irodori_ref"
-    )
-    return cache_dir / f"{digest.hexdigest()}.wav"
+    return cache_path("media", digest.hexdigest(), ".wav", namespace="irodori_ref")
 
 
 def _write_cached_wave(path: Path, pcm: bytes, sample_rate: int) -> None:

@@ -31,6 +31,7 @@ ComfyUI ALICE Lab Audio Toolsは、メディア範囲の選択、音声の編集
 | Audio | `Audio to Irodori Ref Config` | `AUDIO`をcomfy-Irodori-TTSの参照音声用`IRODORI_REF_CONFIG`へ変換します。 |
 | Audio | `Output Waveform` | `AUDIO`を再生し、波形と基本情報を確認します。 |
 | Utils | `Output Float` | 接続した`FLOAT`を指定精度で表示してそのまま渡します。 |
+| Utils | `ALICE Lab Cache Manager` | ALICE Labの文字起こし、サムネイル、メディア、メタデータのキャッシュを確認・安全に削除します。 |
 | Video | `Replace Video Audio` | 動画映像を保ったまま音声を置換します。 |
 | Video | `Preview Video` | `VIDEO`をノード内で再生・ダウンロードします。 |
 | Video | `Video First / Last Frame` | `VIDEO`の最初と最後のフレームを`IMAGE`として出力します。 |
@@ -169,7 +170,7 @@ Input版は上流の`AUDIO`または`VIDEO`を1つだけ受けます。`start_se
 
 FFmpegが直接開ける`http://`または`https://`のメディアURLを受け取ります。URLの直接入力と、他ノードの`STRING`出力からの接続に対応します。YouTubeページURLの解析、yt-dlpの実行、認証回避、DRM処理は行いません。サイト固有のページURLは、外部ノードで直接メディアURLへ解決してから接続してください。
 
-実行時はFFprobeでメタデータを確認し、FFmpegで`start_seconds`〜`end_seconds`の指定区間だけをComfyUIのtempへ保存します。元メディア全体のダウンロードやPython Tensorへの全フレーム展開は行いません。出力映像はComfyUI標準`VIDEO`、音声は44.1 kHzステレオ`AUDIO`です。
+実行時はFFprobeでメタデータを確認し、FFmpegで`start_seconds`〜`end_seconds`の指定区間だけをALICE Labキャッシュへ保存します。同じURLと同じ区間はローカルファイルを再利用します。元メディア全体のダウンロードやPython Tensorへの全フレーム展開は行いません。出力映像はComfyUI標準`VIDEO`、音声は44.1 kHzステレオ`AUDIO`です。
 
 プレビューと波形は選択区間のローカルtempを再利用するため、UI操作のたびにURLへ再接続しません。A/Bを現在読み込み済みの区間外へ動かした場合は、プレビュー前にworkflowを再実行してください。署名付きquery stringは1個のsubprocess引数としてFFmpegへ渡し、画面上のURL表示とエラー詳細からは除外します。
 
@@ -183,7 +184,13 @@ ComfyUI標準`AUDIO`と、IrodoriTTS Reference Audioと同じ`normalize_ref_audi
 
 <p align="center"><a href="docs/images/rodori_ref_config.png"><img src="docs/images/rodori_ref_config.png" alt="Audio to Irodori Ref Config node" width="360"></a></p>
 
-先頭の音声バッチをmono化し、元のサンプルレートを保ったPCM16 WAVとして`ComfyUI/temp/alice_lab_audio_tools/irodori_ref/`へ保存します。ファイル名は音声内容のハッシュなので、同じ音声の再実行では同じファイルを再利用します。現在は comfy-Irodori-TTS の IrodoriTTS Sampler で利用できます。
+先頭の音声バッチをmono化し、元のサンプルレートを保ったPCM16 WAVとして永続ALICE Labキャッシュへ保存します。ファイル名は音声内容のハッシュなので、同じ音声の再実行では同じファイルを再利用します。現在は comfy-Irodori-TTS の IrodoriTTS Sampler で利用できます。
+
+### ALICE Lab Cache Manager
+
+ALICE Labのキャッシュは`ComfyUI/user/__alice_lab_audio_tools/cache/`以下へ、`transcripts`、`thumbnails`、`media`、`metadata`の4区分で永続保存します。`ComfyUI/temp`とは異なり、ComfyUIを再起動しても残ります。Media Rangeの波形データ、ブラウザ用プレビュー、URL区間、Irodori参照WAVはこの共通構成を使います。
+
+`inspect`ではファイル数と容量を確認できます。削除する場合は`clear`を選び、1区分または`all`を指定して`confirm_clear`を有効にします。削除対象は4区分のディレクトリ内だけに制限され、ALICE Labキャッシュ外へ向くシンボリックリンクはたどりません。
 
 ### Audio Mixer
 
