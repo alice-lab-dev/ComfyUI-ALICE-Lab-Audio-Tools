@@ -22,6 +22,7 @@ ComfyUI ALICE Lab Audio Tools is a collection of custom nodes for selecting medi
 | --- | --- | --- |
 | Media | `Load Media Range (Upload)` | Load media from your local device, select an A-B range while viewing its waveform, and output the selected range as `AUDIO` and `VIDEO`. |
 | Media | `Load Media Range (Path)` | Open media directly from an absolute path, select an A-B range while viewing its waveform, and output the selected range as `AUDIO` and `VIDEO`. |
+| Media | `Media Range (URL)` | Read only a selected interval from a direct FFmpeg-compatible HTTP(S) media URL and output it as `AUDIO` and `VIDEO`. |
 | Media | `Media Range (Input)` | Preview upstream `AUDIO` or `VIDEO`, select an A-B range from its waveform, and pass the selected range downstream. |
 | Media | `Transcript Range Selector` | Select start and end dialogue segments from timestamped transcript data and output their time range. |
 | Audio | `Audio Mixer` | Arrange and mix up to eight tracks with waveform previews, clip resizing, and per-clip copy, paste, cut, delete, and duplicate operations across tracks. |
@@ -184,7 +185,7 @@ Use the Path variant when the media exceeds the upload limit or when you do not 
 
 Opens media directly from an absolute path without uploading or copying it. You can select an A-B range while viewing the waveform, then output the selected range as `AUDIO` and `VIDEO`.
 
-`media_path` must be an absolute path to a supported file. The range controls and outputs are the same as the Upload variant.
+`media_path` must be an absolute path to a supported file. You can type or choose the path in the widget, or connect a path from another node's `STRING` output. A connected `STRING` takes precedence while leaving the saved widget value available as a fallback. When that effective path changes, unlinked A-B controls reset to the complete new file; explicitly linked `start_seconds` / `end_seconds` remain authoritative. The range controls and outputs are otherwise the same as the Upload variant.
 
 The source is not copied into `ComfyUI/input`. The ComfyUI server process must have permission to read it.
 
@@ -204,6 +205,18 @@ Accepts exactly one upstream input:
 Run the node once to load the coarse window. The initial `end_seconds = 0` uses the complete upstream input, while the initial local `B = 0` uses the complete coarse window. Local A-B values are preserved across input-window changes when valid and are clamped or reset only when they no longer fit. The outputs report the final selection at `start_seconds + A` through `start_seconds + B` on the upstream input timeline.
 
 For an audio-only input, the `video` output is unavailable. For a video without an audio stream, the `audio` output is unavailable.
+
+### Media Range (URL)
+
+Accepts a direct `http://` or `https://` media URL that FFmpeg can open. Both a typed URL and a connected `STRING` output are supported. The node does not resolve YouTube page URLs, run yt-dlp, bypass authentication, or handle DRM; use another node to resolve a site-specific page into a direct media stream URL first.
+
+On each execution, FFprobe reads metadata and FFmpeg writes only the requested `start_seconds`–`end_seconds` interval into ComfyUI's temporary directory. The complete remote media is not downloaded or expanded into Python frame tensors. The returned video uses ComfyUI's standard `VIDEO` type, and the selected audio is 44.1 kHz stereo `AUDIO`.
+
+The preview and waveform use the local selected-interval temp file, so UI interaction does not repeatedly access the remote URL. If A-B is moved outside the currently loaded interval, run the workflow again before previewing it. Signed query strings are passed to FFmpeg as one subprocess argument and are omitted from the displayed URL label and error details.
+
+Direct stream URLs can expire. Resolve the URL again if the node reports an expired stream, HTTP 403/404, DNS, timeout, disconnect, or unsupported-media error. Initial support expects one URL containing both video and audio, or an audio-only URL; separate video and audio URLs are not combined by this node.
+
+The ComfyUI server performs the URL request. Use this node only on a trusted server and with media URLs you trust; it intentionally does not impose a site allowlist.
 
 ### Media Range controls
 

@@ -37,15 +37,24 @@ function chainCallback(target, key, callback) {
 app.registerExtension({
     name: "ALICE_Lab.MediaRange",
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (!["AliceLabMediaRange", "AliceLabMediaRangePath", "AliceLabMediaRangeInput"].includes(nodeData.name)) return;
+        if (![
+            "AliceLabMediaRange",
+            "AliceLabMediaRangePath",
+            "AliceLabMediaRangeURL",
+            "AliceLabMediaRangeInput",
+        ].includes(nodeData.name)) return;
 
         chainCallback(nodeType.prototype, "onNodeCreated", function () {
             const node = this;
             const isPathNode = nodeData.name === "AliceLabMediaRangePath";
+            const isUrlNode = nodeData.name === "AliceLabMediaRangeURL";
             const isInputNode = nodeData.name === "AliceLabMediaRangeInput";
+            const usesGeneratedPreview = isInputNode || isUrlNode;
             let mediaWidget = isInputNode
                 ? null
-                : node.widgets.find((widget) => widget.name === (isPathNode ? "media_path" : "media"));
+                : node.widgets.find((widget) => widget.name === (
+                    isPathNode ? "media_path" : isUrlNode ? "url" : "media"
+                ));
             if (isPathNode && app.widgets?.VHSPATH && mediaWidget?.type !== "VHS.PATH") {
                 // Use VHS's actual path widget rather than relying on extension
                 // registration order to upgrade ALICE's STRING widget.
@@ -124,12 +133,20 @@ app.registerExtension({
             let activeMedia = video;
             let sourceHasVideo = false;
             let sourceHasAudio = false;
-            let inputPayload = null;
+            let generatedPayload = null;
             let sourceDisplayName = "";
             let sourceOffset = 0;
             let waveformOffset = 0;
             let previewStart = 0;
             let executedRange = null;
+            let loadedSource = null;
+            // When media_path is linked, the backing path widget retains its
+            // serialized fallback. Keep the last executed linked path separate
+            // so preview, waveform, and labels all use the effective STRING.
+            let executedPathSource = null;
+            const activeSource = () => isPathNode && executedPathSource
+                ? executedPathSource
+                : mediaWidget?.value;
             const canvas = document.createElement("canvas");
             canvas.height = 180;
             canvas.style.cssText = "width:100%;height:180px;min-height:120px;flex:none;background:#101419;border:1px solid #39424e;cursor:pointer;touch-action:none;box-sizing:border-box";
@@ -166,8 +183,10 @@ app.registerExtension({
             const allButton = document.createElement("button");
             allButton.textContent = "Show All";
             const addButton = document.createElement("button");
-            addButton.textContent = isInputNode ? "Run to refresh" : isPathNode ? "Load Path" : "Add Media";
-            addButton.style.display = isInputNode ? "none" : "";
+            addButton.textContent = usesGeneratedPreview
+                ? "Run to refresh"
+                : isPathNode ? "Load Path" : "Add Media";
+            addButton.style.display = usesGeneratedPreview ? "none" : "";
             const scaleLabel = document.createElement("label");
             scaleLabel.textContent = "Wave height";
             const scaleInput = document.createElement("input");
@@ -266,8 +285,11 @@ app.registerExtension({
                 }
                 if (document.activeElement !== startInput) startInput.value = formatTime(startWidget.value);
                 if (document.activeElement !== endInput) endInput.value = formatTime(endWidget.value);
-                const sourceName = isInputNode ? sourceDisplayName : mediaWidget?.value;
-                mediaLabel.textContent = sourceName || (isInputNode ? "Run to load connected input" : "No media");
+                const sourceName = usesGeneratedPreview ? sourceDisplayName : activeSource();
+                const emptyLabel = isInputNode
+                    ? "Run to load connected input"
+                    : isUrlNode ? "Run to load direct URL" : "No media";
+                mediaLabel.textContent = sourceName || emptyLabel;
                 mediaLabel.title = sourceName || "";
             }
 
@@ -394,26 +416,42 @@ app.registerExtension({
             async function requestVisibleWaveform(resetNormalization = false) {
                 clearTimeout(waveformTimer);
                 if (!duration || viewEnd <= viewStart || !sourceHasAudio) return;
-                if (!isInputNode && !mediaWidget?.value) return;
-                if (isInputNode && !inputPayload?.filename) return;
+                if (!usesGeneratedPreview && !activeSource()) return;
+                if (usesGeneratedPreview && !generatedPayload?.filename) return;
                 const serial = ++waveformSerial;
-                const filename = isInputNode
-                    ? inputPayload.waveform_filename || inputPayload.filename
-                    : mediaWidget.value;
+                const filename = usesGeneratedPreview
+                    ? generatedPayload.waveform_filename || generatedPayload.filename
+                    : activeSource();
                 const points = Math.max(512, Math.min(12000, Math.ceil(canvas.clientWidth * 2)));
                 const query = new URLSearchParams(
-                    isInputNode ? { preview: filename } : isPathNode ? { path: filename } : { filename }
+                    usesGeneratedPreview
+                        ? { preview: filename }
+                        : isPathNode ? { path: filename } : { filename }
                 );
-                query.set("start", String(viewStart + waveformOffset));
-                query.set("end", String(viewEnd + waveformOffset));
+                let requestStart = viewStart + waveformOffset;
+                let requestEnd = viewEnd + waveformOffset;
+                if (isUrlNode) {
+                    const clipDuration = Number(generatedPayload?.clip_duration) || 0;
+                    requestStart = Math.max(0, requestStart);
+                    requestEnd = Math.min(clipDuration, requestEnd);
+                    if (requestEnd <= requestStart) {
+                        peaks = [];
+                        waveformStart = viewStart;
+                        waveformEnd = viewEnd;
+                        draw();
+                        return;
+                    }
+                }
+                query.set("start", String(requestStart));
+                query.set("end", String(requestEnd));
                 query.set("points", String(points));
                 try {
                     const response = await api.fetchApi(`/alice_lab_audio_tools/waveform?${query}`);
                     const wave = await response.json();
                     if (!response.ok) throw new Error(wave.error || "Waveform generation failed");
-                    const currentFilename = isInputNode
-                        ? inputPayload?.waveform_filename || inputPayload?.filename
-                        : mediaWidget?.value;
+                    const currentFilename = usesGeneratedPreview
+                        ? generatedPayload?.waveform_filename || generatedPayload?.filename
+                        : activeSource();
                     if (serial !== waveformSerial || filename !== currentFilename) return;
                     peaks = wave.peaks || [];
                     waveformStart = Number(wave.start ?? viewStart) - waveformOffset;
@@ -442,11 +480,14 @@ app.registerExtension({
                 // Ignore stale responses if another file is selected while the
                 // metadata or waveform request is still in flight.
                 const serial = ++loadSerial;
-                const filename = isInputNode ? inputPayload?.filename : mediaWidget?.value;
+                const filename = usesGeneratedPreview
+                    ? generatedPayload?.filename
+                    : activeSource();
                 if (!filename) {
-                    label.textContent = isInputNode
+                    label.textContent = usesGeneratedPreview
                         ? "Connect one AUDIO or VIDEO input, then Run"
                         : isPathNode ? "Enter an absolute media path" : "Select media";
+                    if (isUrlNode) label.textContent = "Enter or connect a direct media URL, then Run";
                     return;
                 }
                 // Fully detach the previous resource. Merely removing `src`
@@ -466,25 +507,28 @@ app.registerExtension({
                 label.textContent = "Loading media and waveform…";
                 try {
                     const query = new URLSearchParams(
-                        isInputNode ? { preview: filename } : isPathNode ? { path: filename } : { filename }
+                        usesGeneratedPreview
+                            ? { preview: filename }
+                            : isPathNode ? { path: filename } : { filename }
                     );
                     let info;
-                    if (isInputNode) {
-                        info = inputPayload;
+                    if (usesGeneratedPreview) {
+                        info = generatedPayload;
                     } else {
                         const infoResponse = await api.fetchApi(`/alice_lab_audio_tools/media_info?${query}`);
                         info = await infoResponse.json();
                         if (!infoResponse.ok) throw new Error(info.error || "Media probe failed");
                     }
                     if (serial !== loadSerial) return;
+                    loadedSource = String(filename);
                     duration = info.duration;
-                    viewStart = 0;
-                    viewEnd = duration;
+                    viewStart = isUrlNode ? Number(info.start) : 0;
+                    viewEnd = isUrlNode ? Number(info.end) : duration;
                     // A range belongs to its source media. Reset it instead of
                     // carrying timestamps from the previously selected file.
                     selectedMarker = null;
                     activeMarker = null;
-                    const matchingExecutedRange = !isInputNode
+                    const matchingExecutedRange = !usesGeneratedPreview
                         && executedRange?.source === filename
                         ? executedRange
                         : null;
@@ -492,32 +536,39 @@ app.registerExtension({
                         startWidget,
                         matchingExecutedRange
                             ? matchingExecutedRange.start
-                            : isInputNode ? Number(info.a ?? info.start) : 0
+                            : isInputNode
+                                ? Number(info.a ?? info.start)
+                                : isUrlNode ? Number(info.start) : 0
                     );
                     updateWidget(
                         endWidget,
                         matchingExecutedRange
                             ? matchingExecutedRange.end
-                            : isInputNode ? Number(info.b ?? info.end) : duration
+                            : isInputNode
+                                ? Number(info.b ?? info.end)
+                                : isUrlNode ? Number(info.end) : duration
                     );
                     sourceHasVideo = Boolean(info.has_video);
                     sourceHasAudio = info.has_audio !== false;
                     sourceOffset = isInputNode ? Number(info.source_offset || 0) : 0;
                     waveformOffset = isInputNode
                         ? Number(info.waveform_offset ?? info.source_offset ?? 0)
-                        : 0;
-                    previewStart = 0;
+                        : isUrlNode ? Number(info.waveform_offset ?? 0) : 0;
+                    previewStart = isUrlNode ? Number(info.preview_start ?? info.start) : 0;
                     sourceDisplayName = isInputNode
                         ? `${sourceHasVideo ? "VIDEO" : "AUDIO"} input · ` +
                             `${formatTime(Number(info.input_start ?? 0))}–` +
                             `${formatTime(Number(info.input_end ?? duration))} · ` +
                             `${formatTime(duration)}`
+                        : isUrlNode
+                            ? `${info.display_source || "Remote media"} · ` +
+                                `${formatTime(Number(info.start))}–${formatTime(Number(info.end))}`
                         : filename;
                     if (info.has_video) {
                         video.style.display = "block";
                         audio.style.display = "none";
                         activeMedia = video;
-                        activeMedia.preload = isInputNode ? "auto" : "metadata";
+                        activeMedia.preload = usesGeneratedPreview ? "auto" : "metadata";
                         if (isInputNode) {
                             query.set("clip_start", String(sourceOffset));
                             query.set("clip_end", String(sourceOffset + duration));
@@ -528,7 +579,7 @@ app.registerExtension({
                         video.style.display = "none";
                         audio.style.display = "block";
                         activeMedia = audio;
-                        activeMedia.preload = isInputNode ? "auto" : "metadata";
+                        activeMedia.preload = usesGeneratedPreview ? "auto" : "metadata";
                         if (isInputNode) {
                             query.set("clip_start", String(sourceOffset));
                             query.set("clip_end", String(sourceOffset + duration));
@@ -569,17 +620,28 @@ app.registerExtension({
                 // seek is issued before playback has requested media data. The
                 // A-B play handler performs seek+play together, so defer this
                 // visual-only seek until the browser has current frame data.
-                if (isInputNode && activeMedia.readyState < 2) return;
+                if (usesGeneratedPreview && activeMedia.readyState < 2) return;
+                if (isUrlNode) {
+                    const clipEnd = previewStart + Number(generatedPayload?.clip_duration || 0);
+                    if (time < previewStart || time > clipEnd) return;
+                }
                 activeMedia.currentTime = mediaTimeForLogical(time, activeMedia);
             }
 
+            function previewCoversSelection() {
+                if (!isUrlNode) return true;
+                const clipEnd = previewStart + Number(generatedPayload?.clip_duration || 0);
+                return startWidget.value >= previewStart - 0.001
+                    && endWidget.value <= clipEnd + 0.001;
+            }
+
             function mediaTimeForLogical(time, media = activeMedia) {
-                const offset = isInputNode && sourceHasVideo ? previewStart : 0;
+                const offset = usesGeneratedPreview ? previewStart : 0;
                 return Math.max(0, Math.min(Number(media.duration) || duration, time - offset));
             }
 
             function logicalMediaTime(media = activeMedia) {
-                const offset = isInputNode && sourceHasVideo ? previewStart : 0;
+                const offset = usesGeneratedPreview ? previewStart : 0;
                 return Number(media.currentTime) + offset;
             }
 
@@ -817,6 +879,9 @@ app.registerExtension({
                         if (!activeMedia.currentSrc && !activeMedia.src) {
                             throw new Error("preview is not loaded");
                         }
+                        if (!previewCoversSelection()) {
+                            throw new Error("Run the workflow to load the updated URL range");
+                        }
                         // Stop at B before rewinding. Starting play while still
                         // at B can leave sparse-GOP MP4 previews paused/ended
                         // when the asynchronous backward seek reaches A.
@@ -863,12 +928,12 @@ app.registerExtension({
                 draw();
             });
             addButton.addEventListener("click", () => {
-                if (isInputNode) return;
+                if (usesGeneratedPreview) return;
                 if (isPathNode) loadMedia();
                 else fileInput.click();
             });
             fileInput.addEventListener("change", async () => {
-                if (isPathNode || isInputNode) return;
+                if (isPathNode || usesGeneratedPreview) return;
                 const file = fileInput.files?.[0];
                 if (!file) return;
                 addButton.disabled = true;
@@ -946,10 +1011,17 @@ app.registerExtension({
                     if (media === activeMedia) draw();
                 });
             }
-            if (mediaWidget) chainCallback(mediaWidget, "callback", loadMedia);
+            if (mediaWidget && !isUrlNode) {
+                chainCallback(mediaWidget, "callback", function () {
+                    // A manual/path-browser edit becomes the effective source
+                    // until a connected STRING is executed again.
+                    if (isPathNode) executedPathSource = null;
+                    loadMedia();
+                });
+            }
             chainCallback(startWidget, "callback", draw);
             chainCallback(endWidget, "callback", draw);
-            if (!isInputNode) {
+            if (!usesGeneratedPreview) {
                 chainCallback(node, "onExecuted", function (message) {
                     try {
                         const raw = message?.alice_lab_media_range?.[0]
@@ -966,6 +1038,22 @@ app.registerExtension({
                             start,
                             end,
                         };
+                        if (isPathNode && executedRange.source) {
+                            const previousSource = loadedSource
+                                ?? String(mediaWidget?.value ?? "");
+                            const pathChanged = executedRange.source !== previousSource;
+                            const rangeIsLinked = ["start_seconds", "end_seconds"].some(
+                                (name) => node.inputs?.find((input) => input.name === name)?.link != null
+                            );
+                            executedPathSource = executedRange.source;
+                            // A connected path can change without firing the
+                            // fallback widget callback. A/B belong to the old
+                            // file in that case, so load the new file's complete
+                            // range. Preserve explicit linked start/end values.
+                            if (pathChanged && !rangeIsLinked) executedRange = null;
+                            loadMedia();
+                            return;
+                        }
                         if (executedRange.source !== String(mediaWidget?.value ?? "")) return;
                         updateWidget(startWidget, start);
                         updateWidget(endWidget, end);
@@ -983,8 +1071,8 @@ app.registerExtension({
                     try {
                         const raw = message?.alice_lab_media_range_input?.[0]
                             ?? message?.alice_lab_media_range_input;
-                        inputPayload = typeof raw === "string" ? JSON.parse(raw) : raw;
-                        if (!inputPayload?.filename) throw new Error("Input preview data is missing");
+                        generatedPayload = typeof raw === "string" ? JSON.parse(raw) : raw;
+                        if (!generatedPayload?.filename) throw new Error("Input preview data is missing");
                         loadMedia();
                     } catch (error) {
                         label.textContent = `ALICE Lab: ${error.message}`;
@@ -992,6 +1080,22 @@ app.registerExtension({
                 });
                 setTimeout(() => {
                     label.textContent = "Connect one AUDIO or VIDEO input, then Run";
+                    syncLabel();
+                }, 0);
+            } else if (isUrlNode) {
+                chainCallback(node, "onExecuted", function (message) {
+                    try {
+                        const raw = message?.alice_lab_media_range_url?.[0]
+                            ?? message?.alice_lab_media_range_url;
+                        generatedPayload = typeof raw === "string" ? JSON.parse(raw) : raw;
+                        if (!generatedPayload?.filename) throw new Error("URL preview data is missing");
+                        loadMedia();
+                    } catch (error) {
+                        label.textContent = `ALICE Lab: ${error.message}`;
+                    }
+                });
+                setTimeout(() => {
+                    label.textContent = "Enter or connect a direct media URL, then Run";
                     syncLabel();
                 }, 0);
             } else {

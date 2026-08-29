@@ -22,6 +22,7 @@ ComfyUI ALICE Lab Audio Toolsは、メディア範囲の選択、音声の編集
 | --- | --- | --- |
 | Media | `Load Media Range (Upload)` | ローカルメディアをアップロードし、波形を見ながらA-B範囲を選んで`AUDIO`と`VIDEO`を出力します。 |
 | Media | `Load Media Range (Path)` | 絶対パスのメディアを開き、A-B範囲を選んで`AUDIO`と`VIDEO`を出力します。 |
+| Media | `Media Range (URL)` | FFmpegが読めるHTTP(S)の直接メディアURLから指定区間だけを読み、`AUDIO`と`VIDEO`を出力します。 |
 | Media | `Media Range (Input)` | 上流の`AUDIO`または`VIDEO`をプレビューし、選択範囲を下流へ渡します。 |
 | Media | `Transcript Range Selector` | タイムスタンプ付き文字起こしから開始・終了セリフを選び、その時間範囲を出力します。 |
 | Audio | `Audio Mixer` | 最大8トラック。クリップ長の変更、クリップ単位でのコピー、ペースト、切り取り、削除、複製（トラック間にも対応）。波形表示を使って配置・ミックスします。 |
@@ -160,9 +161,21 @@ Media Range (Input).audio
 
 ### Load Media Range (Path) / Media Range (Input)
 
-Path版は絶対パスの対応ファイルをコピーせずに開きます。信頼できるComfyUIサーバーだけで使い、信頼できない利用者に無制限のサーバー側パスを公開しないでください。
+Path版は絶対パスの対応ファイルをコピーせずに開きます。`media_path`はウィジェットへの直接入力・選択に加え、外部ノードの`STRING`出力から接続できます。接続中は外部`STRING`を優先し、保存済みのウィジェット値はフォールバックとして残します。実効パスが変わった場合、外部接続されていないA/Bは新しいファイルの全範囲へリセットします。`start_seconds` / `end_seconds`が外部接続されている場合はその指定を優先します。信頼できるComfyUIサーバーだけで使い、信頼できない利用者に無制限のサーバー側パスを公開しないでください。
 
 Input版は上流の`AUDIO`または`VIDEO`を1つだけ受けます。`start_seconds` / `end_seconds`は上流タイムライン上の粗い入力対象範囲を指定し、波形・プレビュー・A/Bはその範囲の先頭を0秒とするローカル時間で動作します。A/Bは入力範囲が変わっても有効なら維持され、範囲外になった場合だけclampまたは全範囲へresetされます。最終出力範囲は`start_seconds + A`から`start_seconds + B`です。初期値`end_seconds = 0`は上流入力全体、ローカル`B = 0`は粗い入力範囲全体を選択します。
+
+### Media Range (URL)
+
+FFmpegが直接開ける`http://`または`https://`のメディアURLを受け取ります。URLの直接入力と、他ノードの`STRING`出力からの接続に対応します。YouTubeページURLの解析、yt-dlpの実行、認証回避、DRM処理は行いません。サイト固有のページURLは、外部ノードで直接メディアURLへ解決してから接続してください。
+
+実行時はFFprobeでメタデータを確認し、FFmpegで`start_seconds`〜`end_seconds`の指定区間だけをComfyUIのtempへ保存します。元メディア全体のダウンロードやPython Tensorへの全フレーム展開は行いません。出力映像はComfyUI標準`VIDEO`、音声は44.1 kHzステレオ`AUDIO`です。
+
+プレビューと波形は選択区間のローカルtempを再利用するため、UI操作のたびにURLへ再接続しません。A/Bを現在読み込み済みの区間外へ動かした場合は、プレビュー前にworkflowを再実行してください。署名付きquery stringは1個のsubprocess引数としてFFmpegへ渡し、画面上のURL表示とエラー詳細からは除外します。
+
+直接ストリームURLには有効期限がある場合があります。期限切れ、HTTP 403/404、DNS、timeout、切断、非対応形式のエラーが出た場合はURLを再解決してください。初版は映像と音声を含む単一URL、または音声のみのURLに対応し、映像URLと音声URLの結合は行いません。
+
+URLへの接続はComfyUIサーバーが実行します。信頼できるサーバー上で、信頼できるメディアURLに対して使用してください。特定サイトだけを許可するallowlistは設けていません。
 
 ### Audio to Irodori Ref Config
 

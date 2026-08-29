@@ -32,6 +32,13 @@ from .media_range_input import (
     trim_audio,
     validate_static_range,
 )
+from .media_range_url import (
+    build_url_clip_command,
+    media_url_display_name,
+    media_url_failure,
+    remote_input_args,
+    validate_media_url,
+)
 from .mixer import AliceLabAudioMixer
 from .video_audio_replace import AliceLabReplaceVideoAudio, _write_audio_wave
 from .video_output import AliceLabOutputFFmpeg
@@ -130,7 +137,25 @@ def _resolve_request_media(request) -> Path:
     return _resolve_input(request.rel_url.query.get("filename", ""))
 
 
-def _probe(path: Path, require_audio: bool = True) -> dict[str, object]:
+def _prompt_input_is_linked(prompt, unique_id, input_name: str) -> bool:
+    """Return whether one input of this node is supplied by an upstream link."""
+    if not isinstance(prompt, dict) or unique_id is None:
+        return False
+    node = prompt.get(str(unique_id), prompt.get(unique_id))
+    if not isinstance(node, dict):
+        return False
+    inputs = node.get("inputs")
+    if not isinstance(inputs, dict):
+        return False
+    value = inputs.get(input_name)
+    return isinstance(value, (list, tuple)) and len(value) == 2
+
+
+def _probe(
+    path: str | Path,
+    require_audio: bool = True,
+    input_args: list[str] | None = None,
+) -> dict[str, object]:
     """Read the small subset of ffprobe metadata needed by the node and UI."""
     completed = subprocess.run(
         [
@@ -139,7 +164,7 @@ def _probe(path: Path, require_audio: bool = True) -> dict[str, object]:
                 "format=duration:stream=codec_type,width,height,avg_frame_rate:"
                 "stream_disposition=attached_pic"
             ),
-            "-of", "json", str(path),
+            "-of", "json", *(input_args or []), str(path),
         ],
         check=True,
         capture_output=True,
@@ -478,6 +503,10 @@ class AliceLabMediaRangePath(AliceLabMediaRange):
                     {
                         "default": "",
                         "placeholder": "/path/to/audio-or-video.mp4",
+                        "tooltip": (
+                            "Enter an absolute path or connect a STRING output. "
+                            "A connected value takes precedence over this widget."
+                        ),
                         # Video Helper Suite upgrades STRING widgets carrying
                         # this metadata to its server-side path browser. Without
                         # VHS installed this remains a normal editable field.
@@ -495,30 +524,63 @@ class AliceLabMediaRangePath(AliceLabMediaRange):
                     "FLOAT",
                     {"default": 10.0, "min": 0.001, "max": 86400.0, "step": 0.001},
                 ),
-            }
+            },
+            "hidden": {
+                "prompt": "PROMPT",
+                "unique_id": "UNIQUE_ID",
+            },
         }
 
     DESCRIPTION = "Select a range from media at an absolute path without copying it."
 
-    def extract(self, media_path: str, start_seconds: float, end_seconds: float):
-        result = self._extract_path(
-            _resolve_external(media_path), start_seconds, end_seconds
+    def extract(
+        self,
+        media_path: str,
+        start_seconds: float,
+        end_seconds: float,
+        prompt=None,
+        unique_id=None,
+    ):
+        path = _resolve_external(media_path)
+        previous_path = getattr(self, "_last_media_path", None)
+        path_is_linked = _prompt_input_is_linked(prompt, unique_id, "media_path")
+        range_is_linked = any(
+            _prompt_input_is_linked(prompt, unique_id, name)
+            for name in ("start_seconds", "end_seconds")
         )
+        reset_range = (
+            path_is_linked
+            and previous_path != path
+            and not range_is_linked
+        )
+        result = self._extract_path(
+            path,
+            start_seconds,
+            end_seconds,
+            reset_range=reset_range,
+        )
+        self._last_media_path = path
         return {
             "ui": {
                 "alice_lab_media_range": [
-                    json.dumps(range_ui_payload(media_path, result[1], result[2]))
+                    json.dumps(range_ui_payload(str(path), result[1], result[2]))
                 ]
             },
             "result": result,
         }
 
     @staticmethod
-    def _extract_path(path: Path, start_seconds: float, end_seconds: float):
+    def _extract_path(
+        path: Path,
+        start_seconds: float,
+        end_seconds: float,
+        *,
+        reset_range: bool = False,
+    ):
         info = _probe(path)
         total = float(info["duration"])
-        start = max(0.0, float(start_seconds))
-        end = min(total, float(end_seconds))
+        start = 0.0 if reset_range else max(0.0, float(start_seconds))
+        end = total if reset_range else min(total, float(end_seconds))
         if end <= start:
             raise ValueError("End time must be later than start time")
         audio = _extract_audio(path, start, end)
@@ -532,18 +594,168 @@ class AliceLabMediaRangePath(AliceLabMediaRange):
         return audio, start, end, end - start, video
 
     @classmethod
-    def IS_CHANGED(cls, media_path: str, start_seconds: float, end_seconds: float):
+    def IS_CHANGED(
+        cls,
+        media_path: str,
+        start_seconds: float,
+        end_seconds: float,
+        prompt=None,
+        unique_id=None,
+    ):
         path = _resolve_external(media_path)
         stat = path.stat()
         payload = f"{path}:{stat.st_mtime_ns}:{stat.st_size}:{start_seconds}:{end_seconds}"
         return hashlib.sha256(payload.encode()).hexdigest()
 
     @classmethod
-    def VALIDATE_INPUTS(cls, media_path: str, start_seconds: float, end_seconds: float):
+    def VALIDATE_INPUTS(
+        cls,
+        media_path: str,
+        start_seconds: float,
+        end_seconds: float,
+        prompt=None,
+        unique_id=None,
+    ):
+        # ComfyUI supplies ``None`` while a required primitive input is linked;
+        # the resolved STRING is validated normally when the node executes.
+        if media_path is None:
+            return validate_static_range(start_seconds, end_seconds)
         try:
             _resolve_external(media_path)
         except ValueError as error:
             return str(error)
+        return validate_static_range(start_seconds, end_seconds)
+
+
+class AliceLabMediaRangeURL(AliceLabMediaRange):
+    """Read only one requested interval from a direct HTTP(S) media URL."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "url": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "placeholder": "https://example.com/video.mp4",
+                        "dynamicPrompts": False,
+                    },
+                ),
+                "start_seconds": (
+                    "FLOAT",
+                    {"default": 0.0, "min": 0.0, "max": 86400.0, "step": 0.001},
+                ),
+                "end_seconds": (
+                    "FLOAT",
+                    {"default": 10.0, "min": 0.001, "max": 86400.0, "step": 0.001},
+                ),
+            }
+        }
+
+    DESCRIPTION = (
+        "Read a selected range from a direct FFmpeg-compatible HTTP(S) media URL. "
+        "Page URL resolution is intentionally not included."
+    )
+    OUTPUT_NODE = True
+
+    def extract(self, url: str, start_seconds: float, end_seconds: float):
+        source = validate_media_url(url)
+        try:
+            info = _probe(source, input_args=remote_input_args())
+        except subprocess.CalledProcessError as error:
+            raise ValueError(media_url_failure(error.stderr, source)) from error
+        except Exception as error:
+            raise ValueError(media_url_failure(str(error), source)) from error
+
+        total = float(info["duration"])
+        start = max(0.0, float(start_seconds))
+        end = min(total, float(end_seconds))
+        if end <= start:
+            raise ValueError("End time must be later than start time")
+
+        has_video = bool(info["has_video"])
+        token = uuid.uuid4().hex
+        suffix = ".mp4" if has_video else ".wav"
+        clip_path = (
+            Path(folder_paths.get_temp_directory())
+            / f"alice_lab_media_range_url_{token}{suffix}"
+        )
+        partial = clip_path.with_suffix(f".part{suffix}")
+        command = build_url_clip_command(
+            resolve_media_tool("ffmpeg"),
+            source,
+            start,
+            end,
+            str(partial),
+            has_video=has_video,
+        )
+        completed = subprocess.run(command, capture_output=True)
+        if completed.returncode != 0:
+            partial.unlink(missing_ok=True)
+            raise ValueError(media_url_failure(completed.stderr, source))
+        if not partial.is_file() or partial.stat().st_size == 0:
+            partial.unlink(missing_ok=True)
+            raise ValueError(media_url_failure("FFmpeg produced no media data.", source))
+        partial.replace(clip_path)
+
+        try:
+            clip_info = _probe(clip_path)
+            clip_duration = min(end - start, float(clip_info["duration"]))
+            selected_audio = _extract_audio(clip_path, 0.0, clip_duration)
+        except Exception:
+            clip_path.unlink(missing_ok=True)
+            raise
+
+        selected_video = None
+        if has_video:
+            selected_video = InputImpl.VideoFromFile(str(clip_path)).as_trimmed(
+                0.0,
+                end - start,
+                strict_duration=False,
+            )
+            if selected_video is None:
+                clip_path.unlink(missing_ok=True)
+                raise ValueError("The selected video range could not be created")
+
+        preview_name = _input_preview_name(f"url:{token}", clip_path)
+        payload = {
+            "display_source": media_url_display_name(source),
+            "filename": preview_name,
+            "waveform_filename": preview_name,
+            "duration": total,
+            "clip_duration": clip_duration,
+            "has_video": has_video,
+            "has_audio": True,
+            "start": start,
+            "end": end,
+            "preview_start": start,
+            "waveform_offset": -start,
+        }
+        return {
+            "ui": {"alice_lab_media_range_url": [json.dumps(payload)]},
+            "result": (
+                selected_audio,
+                start,
+                end,
+                end - start,
+                selected_video,
+            ),
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, url: str, start_seconds: float, end_seconds: float):
+        # Remote content and signed stream validity can change without the URL
+        # widget value changing, so do not treat a URL as a permanent cache key.
+        return float("nan")
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, url: str, start_seconds: float, end_seconds: float):
+        if url is not None:
+            try:
+                validate_media_url(url)
+            except ValueError as error:
+                return str(error)
         return validate_static_range(start_seconds, end_seconds)
 
 
@@ -1018,6 +1230,7 @@ async def preview(request):
 NODE_CLASS_MAPPINGS = {
     "AliceLabMediaRange": AliceLabMediaRange,
     "AliceLabMediaRangePath": AliceLabMediaRangePath,
+    "AliceLabMediaRangeURL": AliceLabMediaRangeURL,
     "AliceLabMediaRangeInput": AliceLabMediaRangeInput,
     "AliceLabAudioMixer": AliceLabAudioMixer,
     "AliceLabOutputWaveform": AliceLabOutputWaveform,
@@ -1033,6 +1246,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AliceLabMediaRange": "Load Media Range (Upload)",
     "AliceLabMediaRangePath": "Load Media Range (Path)",
+    "AliceLabMediaRangeURL": "Media Range (URL)",
     "AliceLabMediaRangeInput": "Media Range (Input)",
     "AliceLabAudioMixer": "Audio Mixer",
     "AliceLabOutputWaveform": "Output Waveform",

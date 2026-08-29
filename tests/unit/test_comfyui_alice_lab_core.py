@@ -47,6 +47,7 @@ def test_node_display_names_are_search_oriented_and_keep_node_identifiers() -> N
     assert display_mapping == {
         "AliceLabMediaRange": "Load Media Range (Upload)",
         "AliceLabMediaRangePath": "Load Media Range (Path)",
+        "AliceLabMediaRangeURL": "Media Range (URL)",
         "AliceLabMediaRangeInput": "Media Range (Input)",
         "AliceLabAudioMixer": "Audio Mixer",
         "AliceLabOutputWaveform": "Output Waveform",
@@ -62,6 +63,7 @@ def test_node_display_names_are_search_oriented_and_keep_node_identifiers() -> N
     assert class_mapping_keys == set(display_mapping) == {
         "AliceLabMediaRange",
         "AliceLabMediaRangePath",
+        "AliceLabMediaRangeURL",
         "AliceLabMediaRangeInput",
         "AliceLabAudioMixer",
         "AliceLabOutputWaveform",
