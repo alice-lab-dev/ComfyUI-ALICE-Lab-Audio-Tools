@@ -144,13 +144,15 @@ Media Range (Input).audio
 
 タイムスタンプ付き文字起こしから開始セリフと終了セリフを選択し、対応する`start_seconds`と`end_seconds`を出力します。
 
+<p align="center"><a href="docs/images/transcript_range_selector.png"><img src="docs/images/transcript_range_selector.png" alt="Transcript Range Selectorノード" width="720"></a></p>
+
 入力は`STRING`で、JSONのセグメント列／オブジェクト、またはタイムスタンプ付きSRT/WebVTT本文を受け付けます。内部では各項目を`text`、`start`、`end`へ正規化します。
 
 文字起こし結果は実行時に得られることが多いため、上流STTを一度実行してStart / End候補を読み込み、範囲を選択してからSelector以降を再実行するHuman-in-the-loop方式です。
 
 `End mode`ではStart変更時のEnd追従方法を選べます。`Same segment`は同じセリフ、`Keep current`はStartより前にならない限り現在のEnd、`Next segment`は次のセリフまでを選択します。初期値は`Same segment`です。
 
-2つの`FLOAT`出力はMedia Rangeの`start_seconds`と`end_seconds`へ接続できます。[AIFSH/ComfyUI-WhisperX](https://github.com/AIFSH/ComfyUI-WhisperX)では、同梱の`SRTToString`を介してSRTを`STRING`へ変換してから接続します。
+2つの`FLOAT`出力はMedia Rangeの`start_seconds`と`end_seconds`へ接続できます。
 
 ### Load Media Range (Upload)
 
@@ -192,7 +194,7 @@ ComfyUI標準`AUDIO`と、IrodoriTTS Reference Audioと同じ`normalize_ref_audi
 
 ALICE Labのキャッシュは`ComfyUI/user/__alice_lab_audio_tools/cache/`以下へ、`transcripts`、`thumbnails`、`media`、`metadata`の4区分で永続保存します。`ComfyUI/temp`とは異なり、ComfyUIを再起動しても残ります。Media Rangeの波形データ、ブラウザ用プレビュー、URL区間、Irodori参照WAVはこの共通構成を使います。
 
-`inspect`ではファイル数と容量を確認できます。削除する場合は`clear`を選び、1区分または`all`を指定して`confirm_clear`を有効にします。削除対象は4区分のディレクトリ内だけに制限され、ALICE Labキャッシュ外へ向くシンボリックリンクはたどりません。
+`inspect`ではキャッシュルートと区分別の絶対パス、ファイル数、容量を確認できます。削除する場合は`clear`を選び、1区分または`all`を指定して`confirm_clear`を有効にします。削除後のレポートにも対象パスが表示されます。削除対象は4区分のディレクトリ内だけに制限され、ALICE Labキャッシュ外へ向くシンボリックリンクはたどりません。
 
 ### Audio Mixer
 

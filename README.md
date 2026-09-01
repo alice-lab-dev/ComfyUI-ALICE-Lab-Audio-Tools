@@ -146,13 +146,19 @@ This integration requires [comfy-Irodori-TTS](https://github.com/jupo-ai/comfy-I
 
 Selects start and end transcript segments from timestamped transcription data and outputs the corresponding `start_seconds` and `end_seconds`.
 
+<p align="center">
+  <a href="docs/images/transcript_range_selector.png">
+    <img src="docs/images/transcript_range_selector.png" alt="Transcript Range Selector node" width="720">
+  </a>
+</p>
+
 The node accepts a `STRING` containing either a JSON segment array/object or timestamped SRT/WebVTT text. Internally each entry is normalized to `text`, `start`, and `end`.
 
 Because transcript data is often produced at execution time, the workflow is human-in-the-loop: run the upstream STT once, choose Start and End from the populated selectors, then run the selector and downstream nodes again.
 
 `End mode` controls how End follows a Start change: `Same segment` selects one dialogue segment, `Keep current` preserves End unless it would precede Start, and `Next segment` includes the following segment when available. The default is `Same segment`.
 
-Connect the two `FLOAT` outputs to the `start_seconds` and `end_seconds` inputs of a Media Range node. For [AIFSH/ComfyUI-WhisperX](https://github.com/AIFSH/ComfyUI-WhisperX), route its `SRT` output through its included `SRTToString` node first.
+Connect the two `FLOAT` outputs to the `start_seconds` and `end_seconds` inputs of a Media Range node.
 
 ### Load Media Range (Upload)
 
@@ -250,7 +256,7 @@ The first audio batch is averaged to mono and written at its original sample rat
 
 ALICE Lab caches are stored persistently under `ComfyUI/user/__alice_lab_audio_tools/cache/` in four categories: `transcripts`, `thumbnails`, `media`, and `metadata`. They survive ComfyUI restarts, unlike files under `ComfyUI/temp`. Media Range waveform data, browser preview proxies, URL intervals, and Irodori reference WAV files use this shared cache layout.
 
-Use `inspect` to report file counts and byte sizes. To delete cached data, select `clear`, choose one category or `all`, and enable `confirm_clear`. Deletion is restricted to the four category directories and does not follow symbolic links outside the ALICE Lab cache root.
+Use `inspect` to report the absolute cache root and category paths alongside file counts and byte sizes. To delete cached data, select `clear`, choose one category or `all`, and enable `confirm_clear`. Clear reports also include the affected paths. Deletion is restricted to the four category directories and does not follow symbolic links outside the ALICE Lab cache root.
 
 ### Audio Mixer
 

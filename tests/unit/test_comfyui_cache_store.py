@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
@@ -174,8 +175,32 @@ def test_cache_manager_reports_and_clears_selected_category(tmp_path, monkeypatc
 
     inspected = manager.manage("inspect", "metadata", False)["result"][0]
     cleared = manager.manage("clear", "metadata", True)["result"][0]
+    inspected_report = json.loads(inspected)
+    cleared_report = json.loads(cleared)
+    expected_root = tmp_path / "user" / "__alice_lab_audio_tools" / "cache"
 
     assert '"files": 1' in inspected
     assert '"bytes": 4' in inspected
+    assert inspected_report["cache_root"] == str(expected_root)
+    assert inspected_report["category_paths"] == {
+        "metadata": str(expected_root / "metadata")
+    }
     assert '"files": 1' in cleared
+    assert cleared_report["cache_root"] == str(expected_root)
+    assert cleared_report["category_paths"] == {
+        "metadata": str(expected_root / "metadata")
+    }
     assert not cached.exists()
+
+
+def test_cache_manager_reports_all_category_locations(tmp_path, monkeypatch) -> None:
+    store = _load_module(tmp_path, monkeypatch)
+    manager = _load_manager(store, monkeypatch).AliceLabCacheManager()
+    root = tmp_path / "user" / "__alice_lab_audio_tools" / "cache"
+
+    report = json.loads(manager.manage("inspect", "all", False)["result"][0])
+
+    assert report["cache_root"] == str(root)
+    assert report["category_paths"] == {
+        category: str(root / category) for category in store.CACHE_CATEGORIES
+    }
