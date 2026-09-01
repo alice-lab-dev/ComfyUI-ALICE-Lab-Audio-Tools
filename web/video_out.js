@@ -119,7 +119,8 @@ app.registerExtension({
                     video.pause();
                     video.src = mediaUrl(true);
                     video.load();
-                    status.textContent = `${media.width} × ${media.height} · ${media.duration.toFixed(3)}s`;
+                    const encoder = media.video_encoder ? ` · ${media.video_encoder}` : "";
+                    status.textContent = `${media.width} × ${media.height} · ${media.duration.toFixed(3)}s${encoder}`;
                     save.disabled = false;
                 } catch (error) {
                     status.textContent = `Video Out: ${error.message}`;

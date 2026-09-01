@@ -213,6 +213,8 @@ Accepts a direct `http://` or `https://` media URL that FFmpeg can open. Both a 
 
 On each execution, FFprobe reads metadata. FFmpeg writes only the requested `start_seconds`–`end_seconds` interval into the ALICE Lab cache, and an identical URL and interval reuse that local file. The complete remote media is not downloaded or expanded into Python frame tensors. The returned video uses ComfyUI's standard `VIDEO` type, and the selected audio is 44.1 kHz stereo `AUDIO`.
 
+For video, `video_encoder` accepts `auto`, `nvenc`, `videotoolbox`, or `cpu`. `auto` tests a real one-frame encode, prefers VideoToolbox on macOS and NVENC elsewhere, then falls back to CPU `libx264`. The selection also applies when a browser preview needs re-encoding. An unavailable explicitly selected hardware encoder reports an error instead of silently switching to CPU.
+
 The preview and waveform use the local selected-interval temp file, so UI interaction does not repeatedly access the remote URL. If A-B is moved outside the currently loaded interval, run the workflow again before previewing it. Signed query strings are passed to FFmpeg as one subprocess argument and are omitted from the displayed URL label and error details.
 
 Direct stream URLs can expire. Resolve the URL again if the node reports an expired stream, HTTP 403/404, DNS, timeout, disconnect, or unsupported-media error. Initial support expects one URL containing both video and audio, or an audio-only URL; separate video and audio URLs are not combined by this node.
@@ -369,7 +371,7 @@ Keeps the image from the connected `VIDEO` and replaces its soundtrack with the 
 - Video is stream-copied when possible.
 - Audio is encoded as AAC at 192 kbps.
 - Short audio is padded with silence; long audio is trimmed to the video duration.
-- If video stream copy fails, the node retries with H.264 (`libx264`, CRF 18, yuv420p).
+- If video stream copy fails, the node retries with the H.264 encoder selected by `video_encoder`: `auto`, `nvenc`, `videotoolbox`, or `cpu`.
 - If no video is connected, downstream video execution is blocked safely.
 
 <p align="center">
@@ -382,13 +384,15 @@ Keeps the image from the connected `VIDEO` and replaces its soundtrack with the 
 
 Displays a connected `VIDEO` directly in the node for playback and confirmation. It can be downloaded with the name entered in `filename`, and the unchanged `video` is also passed downstream.
 
+`video_encoder` accepts `auto`, `nvenc`, `videotoolbox`, or `cpu`. An untrimmed file-backed `VIDEO` is stream-copied when MP4-compatible. A trimmed file-backed `VIDEO`, including the result of Replace Video Audio with a logical duration, is sent directly to FFmpeg and encoded with the selected encoder instead of ComfyUI's CPU-only PyAV H.264 path. The node status shows the actual path used: `copy`, `nvenc`, `videotoolbox`, `cpu`, or `comfy` for tensor-backed video.
+
 <p align="center">
   <a href="docs/images/preview-video.png">
     <img src="docs/images/preview-video.png" alt="Preview Video node" width="500">
   </a>
 </p>
 
-The Save button downloads the temporary preview through the browser. It does not write directly to an arbitrary server-side output directory.
+The Save button downloads the temporary preview through the browser. It does not write directly to an arbitrary server-side output directory. Hardware-encoded previews use speed-oriented settings because this node is intended for responsive review rather than final mastering output.
 
 ### Video First / Last Frame
 
@@ -455,7 +459,7 @@ Run `Compare Audio` again. Interactive analysis sessions are intentionally bound
 - Compare Audio uses only the first audio batch and at most two channels.
 - Automatic alignment uses amplitude-envelope correlation and may select an unintended offset for silence, unrelated sources, repetitive content, or delays outside the search range.
 - Audio Mixer supports at most eight inputs.
-- Replace Video Audio produces MP4 and requires `libx264` only when stream-copy fallback is needed.
+- Replace Video Audio produces MP4. A stream-copy fallback requires at least one usable selected H.264 encoder; `cpu` specifically requires `libx264`.
 - Preview Video downloads a temporary browser preview; it is not a server-side save node.
 
 ## Disclaimer

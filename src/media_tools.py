@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -29,6 +31,69 @@ def resolve_media_tool(name: str) -> str:
         f"{name} was not found. Install FFmpeg and make {name} available "
         "to the ComfyUI process."
     )
+
+
+_VIDEO_ENCODER_CODECS = {
+    "nvenc": "h264_nvenc",
+    "videotoolbox": "h264_videotoolbox",
+    "cpu": "libx264",
+}
+
+
+@lru_cache(maxsize=12)
+def _can_encode_video(ffmpeg: str, encoder: str) -> bool:
+    """Test an encoder with one synthetic frame, including device availability."""
+    codec = _VIDEO_ENCODER_CODECS[encoder]
+    completed = subprocess.run(
+        [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=256x256:d=0.04",
+            "-frames:v",
+            "1",
+            "-an",
+            "-c:v",
+            codec,
+            "-pix_fmt",
+            "yuv420p",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+    )
+    return completed.returncode == 0
+
+
+def resolve_video_encoder(ffmpeg: str, requested: str = "auto") -> str:
+    """Resolve auto or validate one explicitly requested H.264 encoder."""
+    choice = str(requested or "auto").strip().lower()
+    if choice not in {"auto", *_VIDEO_ENCODER_CODECS}:
+        raise ValueError(f"Unsupported video encoder: {requested}")
+
+    if choice == "auto":
+        hardware = (
+            ["videotoolbox", "nvenc"]
+            if platform.system() == "Darwin"
+            else ["nvenc", "videotoolbox"]
+        )
+        for candidate in [*hardware, "cpu"]:
+            if _can_encode_video(ffmpeg, candidate):
+                return candidate
+        raise RuntimeError("FFmpeg has no usable H.264 encoder")
+
+    if not _can_encode_video(ffmpeg, choice):
+        codec = _VIDEO_ENCODER_CODECS[choice]
+        raise RuntimeError(
+            f"The requested {choice} encoder ({codec}) is not usable by this FFmpeg process"
+        )
+    return choice
 
 
 def needs_seekable_video_preview(path: Path, max_keyframe_gap: float = 2.5) -> bool:

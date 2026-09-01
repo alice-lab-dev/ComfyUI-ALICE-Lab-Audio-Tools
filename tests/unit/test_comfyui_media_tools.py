@@ -41,6 +41,66 @@ def test_resolve_media_tool_reports_missing_executable(monkeypatch, tmp_path) ->
         media_tools.resolve_media_tool("ffmpeg")
 
 
+def test_auto_video_encoder_uses_first_working_hardware_encoder(monkeypatch) -> None:
+    checked = []
+
+    def can_encode(_ffmpeg, encoder):
+        checked.append(encoder)
+        return encoder == "nvenc"
+
+    monkeypatch.setattr(media_tools.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(media_tools, "_can_encode_video", can_encode)
+
+    assert media_tools.resolve_video_encoder("ffmpeg", "auto") == "nvenc"
+    assert checked == ["nvenc"]
+
+
+def test_auto_video_encoder_falls_back_to_cpu(monkeypatch) -> None:
+    monkeypatch.setattr(media_tools.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        media_tools,
+        "_can_encode_video",
+        lambda _ffmpeg, encoder: encoder == "cpu",
+    )
+
+    assert media_tools.resolve_video_encoder("ffmpeg", "auto") == "cpu"
+
+
+def test_auto_video_encoder_prefers_videotoolbox_on_macos(monkeypatch) -> None:
+    checked = []
+
+    def can_encode(_ffmpeg, encoder):
+        checked.append(encoder)
+        return True
+
+    monkeypatch.setattr(media_tools.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(media_tools, "_can_encode_video", can_encode)
+
+    assert media_tools.resolve_video_encoder("ffmpeg", "auto") == "videotoolbox"
+    assert checked == ["videotoolbox"]
+
+
+def test_explicit_unavailable_video_encoder_does_not_fall_back(monkeypatch) -> None:
+    monkeypatch.setattr(media_tools, "_can_encode_video", lambda _ffmpeg, _encoder: False)
+
+    with pytest.raises(RuntimeError, match="h264_nvenc.*not usable"):
+        media_tools.resolve_video_encoder("ffmpeg", "nvenc")
+
+
+def test_encoder_probe_uses_a_hardware_compatible_frame_size(monkeypatch) -> None:
+    captured = {}
+
+    def run(command, **_kwargs):
+        captured["command"] = command
+        return SimpleNamespace(returncode=0)
+
+    media_tools._can_encode_video.cache_clear()
+    monkeypatch.setattr(media_tools.subprocess, "run", run)
+
+    assert media_tools._can_encode_video("ffmpeg", "nvenc") is True
+    assert "color=c=black:s=256x256:d=0.04" in captured["command"]
+
+
 @pytest.mark.parametrize(
     ("keyframes", "duration", "expected"),
     [

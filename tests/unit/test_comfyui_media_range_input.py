@@ -17,6 +17,9 @@ _MODULE = importlib.util.module_from_spec(_MODULE_SPEC)
 _MODULE_SPEC.loader.exec_module(_MODULE)
 
 
+ROOT = Path(__file__).parents[2]
+
+
 def test_audio_input_range_is_sample_accurate_and_preserves_metadata() -> None:
     audio = {
         "waveform": torch.arange(20, dtype=torch.float32).reshape(1, 2, 10),
@@ -153,3 +156,16 @@ def test_component_slice_covers_subframe_boundaries() -> None:
 
     assert sliced["images"].shape[0] == 5
     assert sliced["frame_offset"] == pytest.approx(0.05)
+
+
+def test_legacy_input_widget_layout_is_normalized_after_configuration() -> None:
+    source = (ROOT / "web" / "media_range.js").read_text(encoding="utf-8")
+
+    assert "function normalizeFloatWidget(widget, fallback = 0)" in source
+    assert "function normalizeInputRangeWidgets()" in source
+    assert "inputStartWidget," in source
+    assert "inputEndWidget," in source
+    assert "aWidget," in source
+    assert "bWidget," in source
+    assert 'chainCallback(node, "onConfigure", function () {' in source
+    assert "normalizeInputRangeWidgets();" in source

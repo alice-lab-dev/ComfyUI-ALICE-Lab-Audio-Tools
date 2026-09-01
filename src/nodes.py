@@ -29,7 +29,7 @@ from .audio_compare import (
 )
 from .audio_output import AliceLabOutputWaveform
 from .float_output import AliceLabOutputFloat
-from .media_tools import needs_seekable_video_preview, resolve_media_tool
+from .media_tools import needs_seekable_video_preview, resolve_media_tool, resolve_video_encoder
 from .media_range_input import (
     audio_duration,
     normalize_local_range,
@@ -48,6 +48,7 @@ from .media_range_url import (
 )
 from .mixer import AliceLabAudioMixer
 from .video_audio_replace import AliceLabReplaceVideoAudio, _write_audio_wave
+from .video_encoding import VIDEO_ENCODER_CHOICES, video_encoder_args
 from .video_output import AliceLabOutputFFmpeg
 from .audio_spectrogram import AliceLabSpectrogram
 from .irodori_ref_config import AliceLabAudioToIrodoriRefConfig
@@ -658,6 +659,7 @@ class AliceLabMediaRangeURL(AliceLabMediaRange):
                     "FLOAT",
                     {"default": 10.0, "min": 0.001, "max": 86400.0, "step": 0.001},
                 ),
+                "video_encoder": (VIDEO_ENCODER_CHOICES, {"default": "auto"}),
             }
         }
 
@@ -667,7 +669,13 @@ class AliceLabMediaRangeURL(AliceLabMediaRange):
     )
     OUTPUT_NODE = True
 
-    def extract(self, url: str, start_seconds: float, end_seconds: float):
+    def extract(
+        self,
+        url: str,
+        start_seconds: float,
+        end_seconds: float,
+        video_encoder: str = "auto",
+    ):
         source = validate_media_url(url)
         try:
             info = _probe(source, input_args=remote_input_args())
@@ -683,23 +691,31 @@ class AliceLabMediaRangeURL(AliceLabMediaRange):
             raise ValueError("End time must be later than start time")
 
         has_video = bool(info["has_video"])
+        ffmpeg = resolve_media_tool("ffmpeg")
+        resolved_encoder = resolve_video_encoder(ffmpeg, video_encoder) if has_video else "audio"
         suffix = ".mp4" if has_video else ".wav"
         clip_key = cache_key(
             "url-range-media",
             {"url": source},
-            {"start": round(start, 9), "end": round(end, 9), "video": has_video},
+            {
+                "start": round(start, 9),
+                "end": round(end, 9),
+                "video": has_video,
+                "video_encoder": resolved_encoder,
+            },
         )
         clip_path = cache_path("media", clip_key, suffix, namespace="url_ranges")
         partial = clip_path.with_name(f".{clip_path.stem}.{uuid.uuid4().hex}.part{suffix}")
         if not clip_path.is_file() or clip_path.stat().st_size == 0:
             clip_path.parent.mkdir(parents=True, exist_ok=True)
             command = build_url_clip_command(
-                resolve_media_tool("ffmpeg"),
+                ffmpeg,
                 source,
                 start,
                 end,
                 str(partial),
                 has_video=has_video,
+                video_encoder=resolved_encoder,
             )
             completed = subprocess.run(command, capture_output=True)
             if completed.returncode != 0:
@@ -1190,10 +1206,27 @@ async def preview(request):
             )
         transcode_video = _preview_modes[source_version]
         preview_mode = "seekable" if transcode_video else "remux"
+    ffmpeg = resolve_media_tool("ffmpeg")
+    if transcode_video:
+        try:
+            resolved_encoder = await asyncio.to_thread(
+                resolve_video_encoder,
+                ffmpeg,
+                query.get("video_encoder", "auto"),
+            )
+        except (ValueError, RuntimeError) as error:
+            return web.Response(text=str(error), status=400)
+    else:
+        resolved_encoder = "copy"
     preview_key = cache_key(
         "adaptive-preview-v3",
         source_identity,
-        {"mode": preview_mode, "max_width": 854, "max_height": 480},
+        {
+            "mode": preview_mode,
+            "video_encoder": resolved_encoder,
+            "max_width": 854,
+            "max_height": 480,
+        },
     )
     proxy = cache_path("thumbnails", preview_key, ".mp4", namespace="media_range")
     # Multiple nodes can request one preview concurrently. A per-source lock
@@ -1207,10 +1240,10 @@ async def preview(request):
             partial.unlink(missing_ok=True)
             video_args = (
                 [
-                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                    *video_encoder_args(resolved_encoder, fast=True),
                     "-vf",
                     "scale=854:480:force_original_aspect_ratio=decrease:force_divisible_by=2",
-                    "-pix_fmt", "yuv420p", "-force_key_frames", "expr:gte(t,n_forced*1)",
+                    "-force_key_frames", "expr:gte(t,n_forced*1)",
                 ]
                 if transcode_video
                 else ["-c:v", "copy"]
@@ -1221,7 +1254,7 @@ async def preview(request):
                 input_args = ["-ss", f"{clip_start:.9f}"]
                 duration_args = ["-t", f"{clip_end - clip_start:.9f}"]
             process = await asyncio.create_subprocess_exec(
-                resolve_media_tool("ffmpeg"), "-hide_banner", "-loglevel", "error",
+                ffmpeg, "-hide_banner", "-loglevel", "error",
                 "-nostdin", *input_args, "-i", str(path), *duration_args,
                 "-map", "0:v:0", "-map", "0:a:0?", *video_args,
                 "-c:a", "aac", "-b:a", "192k",

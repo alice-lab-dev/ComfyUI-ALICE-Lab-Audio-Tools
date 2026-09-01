@@ -172,6 +172,8 @@ FFmpegが直接開ける`http://`または`https://`のメディアURLを受け�
 
 実行時はFFprobeでメタデータを確認し、FFmpegで`start_seconds`〜`end_seconds`の指定区間だけをALICE Labキャッシュへ保存します。同じURLと同じ区間はローカルファイルを再利用します。元メディア全体のダウンロードやPython Tensorへの全フレーム展開は行いません。出力映像はComfyUI標準`VIDEO`、音声は44.1 kHzステレオ`AUDIO`です。
 
+動画の`video_encoder`は`auto`、`nvenc`、`videotoolbox`、`cpu`から選択できます。`auto`は1フレームの実エンコードで利用可否を確認し、macOSではVideoToolbox、それ以外ではNVENCを先に試して、利用できなければ`libx264`によるCPUエンコードへ切り替えます。この選択は再エンコードが必要なブラウザ用プレビューにも適用されます。明示指定したエンコーダーが利用できない場合は、CPUへ黙って切り替えずエラーを表示します。
+
 プレビューと波形は選択区間のローカルtempを再利用するため、UI操作のたびにURLへ再接続しません。A/Bを現在読み込み済みの区間外へ動かした場合は、プレビュー前にworkflowを再実行してください。署名付きquery stringは1個のsubprocess引数としてFFmpegへ渡し、画面上のURL表示とエラー詳細からは除外します。
 
 直接ストリームURLには有効期限がある場合があります。期限切れ、HTTP 403/404、DNS、timeout、切断、非対応形式のエラーが出た場合はURLを再解決してください。初版は映像と音声を含む単一URL、または音声のみのURLに対応し、映像URLと音声URLの結合は行いません。
@@ -220,7 +222,9 @@ Audio SpectrogramはdBFSスペクトログラムを`IMAGE`として出力しま�
 
 ### Replace Video Audio / Preview Video
 
-Replace Video Audioは動画映像を保持して接続済み音声へ置き換えます。音声はAAC 192 kbpsでエンコードし、短い音声は無音で補完、長い音声は動画尺に合わせて切り詰めます。Preview Videoは接続した`VIDEO`を再生・ダウンロードし、任意のサーバー側出力先へ直接書き込みません。
+Replace Video Audioは動画映像を保持して接続済み音声へ置き換えます。音声はAAC 192 kbpsでエンコードし、短い音声は無音で補完、長い音声は動画尺に合わせて切り詰めます。映像のストリームコピーが失敗して再エンコードする場合は、`video_encoder`で同じ4種類を指定できます。Preview Videoも`auto`、`nvenc`、`videotoolbox`、`cpu`に対応し、接続した`VIDEO`を再生・ダウンロードできます。
+
+Preview Videoでは、trimのないファイル由来`VIDEO`はMP4互換ならストリームコピーします。Replace Video Audioの論理尺付き出力など、trimのあるファイル由来`VIDEO`はComfyUIのCPU版PyAV H.264経路を使わず、選択したエンコーダーでFFmpegへ直接渡します。ノード内の状態表示には実際に使った`copy`、`nvenc`、`videotoolbox`、`cpu`、またはTensor由来動画用の`comfy`を表示します。Preview Videoは応答性を優先する確認用ノードのため、ハードウェアエンコード時は速度重視の設定です。任意のサーバー側出力先へ直接書き込みません。
 
 <p align="center">
   <a href="docs/images/replace_video_audio.png">
@@ -260,7 +264,7 @@ mp3  mp4   mpg  mpeg  ogg   opus ts   wav  webm  wma
 - Compare Audioは最初の音声バッチと最大2チャンネルのみを使用します。
 - 自動位置合わせには振幅エンベロープの相関を使用します。そのため、無音、関連性のない音源、繰り返しの多い音声、または検索範囲を超える遅延では、意図しないオフセットが選択される場合があります。
 - Audio Mixerの入力は最大8つです。
-- Replace Video Audioの出力形式はMP4です。ストリームコピーからのフォールバックが必要な場合に限り、`libx264`が必要です。
+- Replace Video Audioの出力形式はMP4です。ストリームコピーからのフォールバックには、選択したH.264エンコーダーが必要です。`cpu`を指定する場合は`libx264`が必要です。
 - Preview Videoはブラウザで確認するための一時ファイルをダウンロードします。サーバー側へ保存するノードではありません。
 
 ## 免責事項

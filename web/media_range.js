@@ -34,6 +34,16 @@ function chainCallback(target, key, callback) {
     };
 }
 
+function normalizeFloatWidget(widget, fallback = 0) {
+    if (!widget) return;
+    const textIsEmpty = typeof widget.value === "string" && widget.value.trim() === "";
+    const numeric = textIsEmpty ? Number.NaN : Number(widget.value);
+    const normalized = Number.isFinite(numeric) ? numeric : fallback;
+    if (Object.is(widget.value, normalized)) return;
+    widget.value = normalized;
+    widget.callback?.(normalized);
+}
+
 app.registerExtension({
     name: "ALICE_Lab.MediaRange",
     async beforeRegisterNodeDef(nodeType, nodeData) {
@@ -76,6 +86,9 @@ app.registerExtension({
             const inputEndWidget = node.widgets.find(
                 (widget) => widget.name === "end_seconds"
             );
+            const videoEncoderWidget = node.widgets.find(
+                (widget) => widget.name === "video_encoder"
+            );
             const aWidget = isInputNode
                 ? node.widgets.find((widget) => widget.name === "a_seconds")
                 : null;
@@ -91,6 +104,23 @@ app.registerExtension({
                     backing.hidden = true;
                 }
             }
+            function normalizeInputRangeWidgets() {
+                if (!isInputNode) return;
+                // Media Range (Input) originally stored
+                // [start_seconds, end_seconds, DOM widget]. When a_seconds and
+                // b_seconds were added, an old DOM value such as "" could be
+                // restored positionally into a_seconds. Repair the live
+                // widgets after configuration so old workflows remain valid.
+                for (const backing of [
+                    inputStartWidget,
+                    inputEndWidget,
+                    aWidget,
+                    bWidget,
+                ]) {
+                    normalizeFloatWidget(backing, 0);
+                }
+            }
+            normalizeInputRangeWidgets();
             // All interaction state is scoped to this node instance so several
             // media-range nodes can coexist in one workflow independently.
             let duration = 0;
@@ -264,7 +294,10 @@ app.registerExtension({
             }
 
             chainCallback(node, "onResize", schedulePanelFit);
-            chainCallback(node, "onConfigure", schedulePanelFit);
+            chainCallback(node, "onConfigure", function () {
+                normalizeInputRangeWidgets();
+                schedulePanelFit();
+            });
             node.setSize([Math.max(node.size[0], 680), Math.max(node.size[1], 610)]);
             schedulePanelFit();
 
@@ -573,6 +606,7 @@ app.registerExtension({
                             query.set("clip_start", String(sourceOffset));
                             query.set("clip_end", String(sourceOffset + duration));
                         }
+                        query.set("video_encoder", String(videoEncoderWidget?.value || "auto"));
                         query.set("cache", Date.now().toString());
                         video.src = api.apiURL(`/alice_lab_audio_tools/preview?${query}`);
                     } else {

@@ -11,8 +11,9 @@ import torch
 from comfy_api.latest import InputImpl
 from comfy_execution.graph_utils import ExecutionBlocker
 
-from .media_tools import resolve_media_tool
+from .media_tools import resolve_media_tool, resolve_video_encoder
 from .media_range_input import trim_video_to_logical_duration
+from .video_encoding import VIDEO_ENCODER_CHOICES, video_encoder_args
 
 
 def _write_audio_wave(path: Path, audio: dict) -> None:
@@ -58,7 +59,15 @@ def _materialize_video_source(video, path: Path) -> tuple[Path, float, float]:
     raise ValueError("Unsupported VIDEO stream source")
 
 
-def _mux(source: Path, audio: Path, output: Path, start: float, duration: float, copy_video: bool) -> subprocess.CompletedProcess:
+def _mux(
+    source: Path,
+    audio: Path,
+    output: Path,
+    start: float,
+    duration: float,
+    copy_video: bool,
+    video_encoder: str = "cpu",
+) -> subprocess.CompletedProcess:
     command = [resolve_media_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin"]
     if start > 0:
         command += ["-ss", f"{start:.6f}"]
@@ -66,7 +75,7 @@ def _mux(source: Path, audio: Path, output: Path, start: float, duration: float,
     if copy_video:
         command += ["-c:v", "copy"]
     else:
-        command += ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"]
+        command += video_encoder_args(video_encoder, cpu_preset="medium")
     command += [
         "-c:a", "aac", "-b:a", "192k", "-af", "apad",
         "-t", f"{duration:.6f}", "-movflags", "+faststart", "-y", str(output),
@@ -81,7 +90,10 @@ class AliceLabReplaceVideoAudio:
     def INPUT_TYPES(cls):
         return {
             "required": {"audio": ("AUDIO",)},
-            "optional": {"video": ("VIDEO",)},
+            "optional": {
+                "video": ("VIDEO",),
+                "video_encoder": (VIDEO_ENCODER_CHOICES, {"default": "auto"}),
+            },
         }
 
     RETURN_TYPES = ("VIDEO",)
@@ -90,7 +102,7 @@ class AliceLabReplaceVideoAudio:
     CATEGORY = "ALICE_Lab/Video"
     DESCRIPTION = "Replace video audio, padding or trimming it to the video duration."
 
-    def replace(self, audio, video=None):
+    def replace(self, audio, video=None, video_encoder="auto"):
         # Keep graph wiring intact while an upstream Media Range temporarily
         # selects audio-only media. A silent blocker prevents downstream video
         # output nodes from receiving None; selecting video reactivates the path.
@@ -111,7 +123,17 @@ class AliceLabReplaceVideoAudio:
             result = _mux(source, audio_path, output_path, start, duration, copy_video=True)
             if result.returncode != 0:
                 output_path.unlink(missing_ok=True)
-                result = _mux(source, audio_path, output_path, start, duration, copy_video=False)
+                ffmpeg = resolve_media_tool("ffmpeg")
+                resolved_encoder = resolve_video_encoder(ffmpeg, video_encoder)
+                result = _mux(
+                    source,
+                    audio_path,
+                    output_path,
+                    start,
+                    duration,
+                    copy_video=False,
+                    video_encoder=resolved_encoder,
+                )
             if result.returncode != 0 or not output_path.is_file() or output_path.stat().st_size == 0:
                 detail = result.stderr.strip()
                 raise RuntimeError(detail or "Video audio replacement failed")

@@ -4,6 +4,8 @@ import math
 import re
 from urllib.parse import urlsplit
 
+from .video_encoding import video_encoder_args
+
 
 REMOTE_IO_TIMEOUT_MICROSECONDS = 15_000_000
 
@@ -49,6 +51,7 @@ def build_url_clip_command(
     output_path: str,
     *,
     has_video: bool,
+    video_encoder: str = "cpu",
 ) -> list[str]:
     """Build an argv-only FFmpeg command for one requested remote interval."""
     source = validate_media_url(url)
@@ -78,14 +81,7 @@ def build_url_clip_command(
                 "0:v:0",
                 "-map",
                 "0:a:0",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "18",
-                "-pix_fmt",
-                "yuv420p",
+                *video_encoder_args(video_encoder),
                 "-c:a",
                 "aac",
                 "-b:a",
